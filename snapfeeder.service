@@ -1,0 +1,30 @@
+[Unit]
+Description=SnapFeeder - Flask RTSP Snapshot Server
+After=mediamtx.service
+Requires=mediamtx.service
+PartOf=mediamtx.service
+
+# Allow up to 10 restarts within 30 seconds
+StartLimitBurst=10
+StartLimitIntervalSec=30
+
+[Service]
+# Kill any previous lingering snapshot processes before starting (ignore if not found)
+ExecStartPre=/bin/sh -c 'pgrep -f snapfeeder.py | grep -v $$ | xargs --no-run-if-empty kill || true'
+
+# Command to launch the snapshot server
+ExecStart=/usr/bin/python3 /usr/local/bin/snapfeeder.py --port 5050
+
+# Ensure the service is restarted automatically if it crashes
+Restart=always
+RestartSec=5
+
+# Run the service as root
+User=root
+
+# Prevent Python from buffering output (for logging/debugging)
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+# Start automatically during system boot
+WantedBy=multi-user.target
