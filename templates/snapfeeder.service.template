@@ -1,0 +1,14 @@
+[Unit]
+Description=SnapFeeder Flask Snapshot Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%INSTALL_DIR%/scripts
+ExecStart=/usr/bin/python3 %INSTALL_DIR%/scripts/snapfeeder.py
+Restart=always
+RestartSec=3
+User=%USERNAME%
+
+[Install]
+WantedBy=multi-user.target

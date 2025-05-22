@@ -1,0 +1,14 @@
+[Unit]
+Description=MediaMTX RTSP/WebRTC Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%INSTALL_DIR%/mediamtx
+ExecStart=%INSTALL_DIR%/mediamtx/mediamtx
+Restart=always
+RestartSec=5
+User=%USERNAME%
+
+[Install]
+WantedBy=multi-user.target

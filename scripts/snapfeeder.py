@@ -1,52 +1,52 @@
 #!/usr/bin/env python3
 
 """
-RTSP JPEG Snapshot Server (Optimized for Raspberry Pi 5)
----------------------------------------------------------
-This script runs a low-latency Flask web server that serves JPEG snapshots from one or more RTSP cameras.
-It uses a lightweight architecture:
-- One ffmpeg subprocess per camera receives raw H.264 video over RTSP and outputs MPEG-TS to stdout
-- PyAV decodes the packets and stores the latest decoded frame
-- TurboJPEG encodes the most recent frame into JPEG only when a request is made
+snapfeeder.py
+-------------
+Flask-based JPEG snapshot server for MediaMTX RTSP streams.
 
-All camera configurations are parsed from /usr/local/etc/mediamtx.yml.
-Only cameras with 'source: publisher' and a valid RTSP URL in 'runOnInit' are used.
+This server:
+- Parses ../mediamtx/mediamtx.yml (relative to this script)
+- Detects all cameras with `source: publisher` and RTSP in `runOnInit`
+- Spawns an ffmpeg subprocess for each RTSP stream
+- Uses PyAV to grab latest frame
+- Encodes to JPEG on-demand using TurboJPEG
+- One snapshot endpoint per camera: /cam0.jpg, /cam1.jpg, etc.
 
+Dependencies:
+- ruamel.yaml, flask, av, turbojpeg, ffmpeg
 """
 
-from ruamel.yaml import YAML         # To parse mediamtx.yml
-import subprocess                    # To launch ffmpeg subprocesses
-import threading                     # To run camera handlers concurrently
-import signal                        # For process termination
-import atexit                        # Register exit cleanup
-import time                          # Delay handling
-import os                            # File paths
-import re                            # RTSP URL extraction
-import argparse                      # CLI parsing
-from flask import Flask, Response, send_file  # HTTP server
-from io import BytesIO               # Memory buffer for JPEGs
-import av                            # PyAV for decoding
-from turbojpeg import TurboJPEG      # TurboJPEG for fast JPEG encoding
+import os
+import re
+import sys
+import av
+import time
+import signal
+import threading
+import subprocess
+from ruamel.yaml import YAML
+from flask import Flask, Response, send_file
+from io import BytesIO
+from turbojpeg import TurboJPEG
+from pathlib import Path
 
-# Parse optional HTTP port argument
-parser = argparse.ArgumentParser(description="RTSP JPEG snapshot server")
-parser.add_argument('--port', type=int, default=5050, help='Port for Flask server (default: 5050)')
-args = parser.parse_args()
-PORT = args.port
+# Configuration file path: ../mediamtx/mediamtx.yml
+CONFIG_PATH = Path(__file__).resolve().parent.parent / "mediamtx" / "mediamtx.yml"
 
-# Global Flask app and runtime data
+# Flask app and runtime data
 app = Flask(__name__)
-CAMERAS = {}  # name → {source, container, process, latest_frame, latest_jpeg}
+CAMERAS = {}  # cam name → stream info
 JPEG_ENCODER = TurboJPEG()
-CONFIG_PATH = '/usr/local/etc/mediamtx.yml'
 
+# Parse MediaMTX config and extract camera definitions
 def parse_mediamtx_config():
     """
-    Reads mediamtx.yml and extracts RTSP camera definitions.
-    Only entries with 'source: publisher' and a valid 'rtsp://' link in 'runOnInit' are accepted.
+    Reads mediamtx.yml and collects all RTSP camera entries
+    with source: publisher and a valid RTSP URL in runOnInit.
     """
-    if not os.path.exists(CONFIG_PATH):
-        raise FileNotFoundError(f"Config not found: {CONFIG_PATH}")
+    if not CONFIG_PATH.exists():
+        raise FileNotFoundError(f"❌ Config file not found: {CONFIG_PATH}")
     
     yaml = YAML()
     with open(CONFIG_PATH, 'r') as f:
@@ -70,10 +70,11 @@ def parse_mediamtx_config():
                 'latest_jpeg': None
             }
 
+# FFmpeg + PyAV capture thread for a specific camera
 def capture_loop(name):
     """
-    Threaded loop that launches ffmpeg to decode RTSP video,
-    extracts latest frame via PyAV and stores it in memory.
+    Runs FFmpeg as a subprocess to pull RTSP stream,
+    decodes packets via PyAV, stores latest frame in memory.
     """
     cam = CAMERAS[name]
     cmd = [
@@ -108,10 +109,12 @@ def capture_loop(name):
         except Exception:
             time.sleep(5)
 
+# Flask view to return JPEG snapshot from camera
 def serve_snapshot(name):
     """
-    Flask route to return a JPEG snapshot from a named camera.
-    Returns 404 if not found, 503 if frame isn't ready.
+    Returns latest JPEG from memory.
+    - 404: unknown camera
+    - 503: no frame ready
     """
     cam = CAMERAS.get(name)
     if not cam:
@@ -131,13 +134,8 @@ def serve_snapshot(name):
     except Exception as e:
         return f"Encoding error: {e}", 500
 
-# Register dynamic route
-app.add_url_rule('/<name>.jpg', view_func=serve_snapshot)
-
+# Graceful shutdown: stop all ffmpeg processes
 def cleanup():
-    """
-    Cleanly terminates all ffmpeg subprocesses on shutdown.
-    """
     for cam in CAMERAS.values():
         proc = cam.get('process')
         if proc:
@@ -147,8 +145,12 @@ def cleanup():
             except subprocess.TimeoutExpired:
                 proc.kill()
 
-# Main execution
+# Register Flask route
+app.add_url_rule('/<name>.jpg', view_func=serve_snapshot)
+
+# Main entrypoint
 if __name__ == '__main__':
+    import atexit
     try:
         parse_mediamtx_config()
     except Exception as e:
@@ -156,7 +158,7 @@ if __name__ == '__main__':
         sys.exit(1)
 
     if not CAMERAS:
-        print("No valid RTSP publishers found.")
+        print("No RTSP publishers found in mediamtx.yml.")
         sys.exit(1)
 
     for name in CAMERAS:
@@ -165,4 +167,4 @@ if __name__ == '__main__':
 
     atexit.register(cleanup)
     time.sleep(1)
-    app.run(host='0.0.0.0', port=PORT)
+    app.run(host='0.0.0.0', port=5050)

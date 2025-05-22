@@ -1,20 +1,42 @@
 #!/bin/bash
 
-# ===============================================================
-# Installs MediaMTX and SnapFeeder, configures mediamtx.yml
-# using generate_mediamtx_config.py (with VAAPI & YAML editing).
-# ===============================================================
+# ==============================================================================
+# Full Installer for MediaMTX + SnapFeeder
+# ----------------------------------------
+# - Installs dependencies via APT and pip if needed
+# - Downloads MediaMTX and places it into ./mediamtx/
+# - Generates mediamtx.yml using scripts/generate_mediamtx_config.py
+# - Processes *.service.template files from ./templates/
+#   - Injects current user and absolute install path
+#   - Saves rendered files into ./services/
+#   - Creates symlinks into /etc/systemd/system/
+# - Starts and enables systemd services
+# ==============================================================================
 
 set -e
 
 echo "📦 Starting installation of MediaMTX + SnapFeeder..."
 
-# Determine directory of this script to reliably find resources
+# ------------------------------------------------------------------------------
+# Determine important paths
+# ------------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$SCRIPT_DIR/scripts"
+MEDIAMTX_DIR="$SCRIPT_DIR/mediamtx"
+TEMPLATE_DIR="$SCRIPT_DIR/templates"
+SERVICE_DIR="$SCRIPT_DIR/services"
 
-# --------------------------------------------------------------
-# Step 1: Required APT packages (only essentials, no duplicates)
-# --------------------------------------------------------------
+MEDIAMTX_BIN="$MEDIAMTX_DIR/mediamtx"
+MEDIAMTX_CONFIG="$MEDIAMTX_DIR/mediamtx.yml"
+
+USERNAME=$(whoami)
+INSTALL_DIR="$SCRIPT_DIR"  # Absolute path for template replacement
+
+mkdir -p "$SERVICE_DIR"
+
+# ------------------------------------------------------------------------------
+# Step 1: Install required system packages
+# ------------------------------------------------------------------------------
 APT_PACKAGES=(
   curl ffmpeg v4l-utils
   python3 python3-pip
@@ -23,7 +45,6 @@ APT_PACKAGES=(
   libturbojpeg0
 )
 
-# Dynamically detect if python3-turbojpeg is available
 if apt-cache show python3-turbojpeg >/dev/null 2>&1; then
   APT_PACKAGES+=(python3-turbojpeg)
   INSTALL_TURBOJPEG_PIP=0
@@ -35,15 +56,14 @@ echo "🔧 Installing system dependencies..."
 sudo apt update
 sudo apt install -y "${APT_PACKAGES[@]}"
 
-# --------------------------------------------------------------
-# Step 2: Install PyTurboJPEG via pip if not in APT
-# --------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Step 2: Install PyTurboJPEG via pip if necessary
+# ------------------------------------------------------------------------------
 if [[ $INSTALL_TURBOJPEG_PIP -eq 1 ]]; then
-  echo "⚠️  Installing PyTurboJPEG via pip (APT not available)..."
+  echo "⚠️  python3-turbojpeg not available via APT, installing PyTurboJPEG via pip..."
   if python3 -c "import turbojpeg" 2>/dev/null; then
     echo "✅ PyTurboJPEG already installed"
   else
-    echo "⚠️  Installing PyTurboJPEG via pip..."
     if pip3 install --help | grep -q -- '--break-system-packages'; then
       sudo pip3 install -U git+https://github.com/lilohuang/PyTurboJPEG.git --break-system-packages
     else
@@ -52,9 +72,9 @@ if [[ $INSTALL_TURBOJPEG_PIP -eq 1 ]]; then
   fi
 fi
 
-# --------------------------------------------------------------
-# Step 3: Download and extract latest MediaMTX release
-# --------------------------------------------------------------
+# ------------------------------------------------------------------------------
+# Step 3: Download MediaMTX binary and default config to ./mediamtx/
+# ------------------------------------------------------------------------------
 VERSION=$(curl -s https://api.github.com/repos/bluenviron/mediamtx/releases/latest | grep tag_name | cut -d '"' -f 4)
 ARCH=$(uname -m)
 case "$ARCH" in
@@ -71,70 +91,61 @@ echo "⬇️  Downloading MediaMTX $VERSION for $PLATFORM..."
 curl -L -o mediamtx.tar.gz "https://github.com/bluenviron/mediamtx/releases/download/${VERSION}/mediamtx_${VERSION}_${PLATFORM}.tar.gz"
 tar -xzf mediamtx.tar.gz
 
-# --------------------------------------------------------------
-# Step 4: Install MediaMTX binary and default config
-# --------------------------------------------------------------
-sudo mv mediamtx /usr/local/bin/
-sudo chmod +x /usr/local/bin/mediamtx
-sudo mkdir -p /usr/local/etc/
-sudo mv mediamtx.yml /usr/local/etc/mediamtx.yml
-sudo chmod 644 /usr/local/etc/mediamtx.yml
+mkdir -p "$MEDIAMTX_DIR"
+mv mediamtx "$MEDIAMTX_BIN"
+chmod +x "$MEDIAMTX_BIN"
+mv mediamtx.yml "$MEDIAMTX_CONFIG"
+chmod 644 "$MEDIAMTX_CONFIG"
 
-# --------------------------------------------------------------
-# Step 5: Generate config using generate_mediamtx_config.py
-# --------------------------------------------------------------
-if [[ ! -f "$SCRIPT_DIR/generate_mediamtx_config.py" ]]; then
-  echo "❌ Missing: generate_mediamtx_config.py"
+# ------------------------------------------------------------------------------
+# Step 4: Run Python config generator to populate mediamtx.yml
+# ------------------------------------------------------------------------------
+GEN_SCRIPT="$SCRIPTS_DIR/generate_mediamtx_config.py"
+if [[ ! -f "$GEN_SCRIPT" ]]; then
+  echo "❌ Missing script: $GEN_SCRIPT"
   exit 1
 fi
 
-echo "🧠 Generating camera path section..."
-python3 "$SCRIPT_DIR/generate_mediamtx_config.py"
+echo "🧠 Generating mediamtx.yml with connected camera paths..."
+python3 "$GEN_SCRIPT"
 
-# --------------------------------------------------------------
-# Step 6: Install MediaMTX systemd service
-# --------------------------------------------------------------
-if [[ ! -f "$SCRIPT_DIR/mediamtx.service" ]]; then
-  echo "❌ Missing: mediamtx.service"
-  exit 1
-fi
+# ------------------------------------------------------------------------------
+# Step 5: Render .service files from templates and symlink to systemd
+# ------------------------------------------------------------------------------
+for template in "$TEMPLATE_DIR"/*.service.template; do
+  base=$(basename "$template" .template)
+  output="$SERVICE_DIR/$base"
+  systemd_target="/etc/systemd/system/$base"
 
-sudo install -m 644 "$SCRIPT_DIR/mediamtx.service" /etc/systemd/system/mediamtx.service
+  echo "🛠️  Rendering $base..."
 
-# --------------------------------------------------------------
-# Step 7: Install SnapFeeder script and service
-# --------------------------------------------------------------
-if [[ ! -f "$SCRIPT_DIR/snapfeeder.py" ]]; then
-  echo "❌ Missing: snapfeeder.py"
-  exit 1
-fi
+  # Render template with variable substitution
+  sed \
+    -e "s|%INSTALL_DIR%|$INSTALL_DIR|g" \
+    -e "s|%USERNAME%|$USERNAME|g" \
+    "$template" > "$output"
 
-if [[ ! -f "$SCRIPT_DIR/snapfeeder.service" ]]; then
-  echo "❌ Missing: snapfeeder.service"
-  exit 1
-fi
+  # Create symlink to systemd
+  echo "🔗 Linking $base → $systemd_target"
+  sudo ln -sf "$output" "$systemd_target"
+done
 
-sudo install -m 755 "$SCRIPT_DIR/snapfeeder.py" /usr/local/bin/snapfeeder.py
-sudo install -m 644 "$SCRIPT_DIR/snapfeeder.service" /etc/systemd/system/snapfeeder.service
-
-# --------------------------------------------------------------
-# Step 8: Reload and enable both services
-# --------------------------------------------------------------
-echo "🚀 Enabling MediaMTX and SnapFeeder services..."
+# ------------------------------------------------------------------------------
+# Step 6: Reload systemd and enable/start services
+# ------------------------------------------------------------------------------
+echo "🚀 Reloading and enabling services..."
 sudo systemctl daemon-reexec
 sudo systemctl daemon-reload
-sudo systemctl enable mediamtx snapfeeder
-sudo systemctl start mediamtx snapfeeder
+sudo systemctl enable mediamtx.service snapfeeder.service
+sudo systemctl restart mediamtx.service snapfeeder.service
 
-# --------------------------------------------------------------
-# Done + show all configured cameras
-# --------------------------------------------------------------
-echo "✅ Installation finished!"
+# ------------------------------------------------------------------------------
+# Step 7: Show configured camera URLs
+# ------------------------------------------------------------------------------
+echo "✅ Installation complete!"
 echo ""
-echo "🔍 Configured cameras (from /usr/local/etc/mediamtx.yml):"
-
-# Extract cam names from YAML using grep/sed (safe for default format)
-cam_names=$(grep '^[[:space:]]*cam[0-9]\+:' /usr/local/etc/mediamtx.yml | sed 's/^[[:space:]]*//;s/://')
+echo "🔍 Configured cameras (from $MEDIAMTX_CONFIG):"
+cam_names=$(grep '^[[:space:]]*cam[0-9]\+:' "$MEDIAMTX_CONFIG" | sed 's/^[[:space:]]*//;s/://')
 
 for cam in $cam_names; do
   echo "🎥 $cam:"

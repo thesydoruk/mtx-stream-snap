@@ -1,72 +1,89 @@
 # MediaMTX + SnapFeeder Auto Installer
 
-This package sets up a complete local RTSP + JPEG snapshot system on Raspberry Pi (4/5) or compatible Linux machines.
+This project provides a complete, self-contained RTSP + JPEG snapshot system using:
 
-## Components
+- **MediaMTX** for RTSP and WebRTC streaming with FFmpeg backend
+- **SnapFeeder**, a Flask server that serves JPEG snapshots on-demand
+- A Python-based configuration generator that automatically detects connected cameras and sets up MediaMTX accordingly
 
-- **MediaMTX**: RTSP/WebRTC server with FFmpeg backend
-- **SnapFeeder**: Flask server for on-demand JPEG snapshots from RTSP streams
-- **generate_mediamtx_config.py**: Auto-generates `mediamtx.yml` with optimized camera configuration
+---
 
-## Features
+## 📁 Project Structure
 
-- Detects all connected `/dev/video*` cameras
-- Selects optimal format (`mjpeg` preferred) and resolution (1280x720 if available)
-- Sets best fps per resolution
-- Uses **VAAPI hardware acceleration** if available and functional
-- Auto-configures `mediamtx.yml`:
-  - Enables: `rtsp`, `webrtc`
-  - Disables: `rtmp`, `hls`, `api`, `metrics`, `pprof`, `playback`, `srt`
-  - Adds STUN server (`stun:stun.l.google.com:19302`) if missing
-- Installs `mediamtx` and `snapfeeder.py` to `/usr/local/bin`
-- Creates and enables systemd services:
-  - `mediamtx.service`
-  - `snapfeeder.service`
+```
+project/
+├── install.sh                # Full setup script
+├── uninstall.sh              # Cleanup script
+├── mediamtx/                 # Holds downloaded MediaMTX binary and mediamtx.yml
+│   ├── mediamtx
+│   └── mediamtx.yml
+├── scripts/                  # All project Python logic
+│   ├── generate_mediamtx_config.py
+│   └── snapfeeder.py
+├── templates/                # Template .service files with placeholders
+│   ├── mediamtx.service.template
+│   └── snapfeeder.service.template
+└── services/                 # Populated during install with rendered .service files
+```
 
-## Requirements
+---
 
-- OS: Debian-based (Raspberry Pi OS, Ubuntu)
-- Python 3.6+
-- APT packages:
-  - `python3`, `python3-pip`, `python3-flask`, `python3-av`, `python3-numpy`
-  - `ffmpeg`, `v4l-utils`, `libturbojpeg0`, `python3-ruamel.yaml`
-- If `python3-turbojpeg` is not available, `PyTurboJPEG` is installed via pip
+## ✅ Features
 
-## Installation
+- Detects all `/dev/video*` USB cameras
+- Chooses best format:
+  - Prefers `mjpeg`, falls back to others
+  - Picks `1280x720` if supported, else highest
+  - Uses max fps for selected resolution
+- Leverages **VAAPI** hardware acceleration if available
+- Configures `mediamtx.yml` with:
+  - Enabled: `rtsp`, `webrtc`
+  - Disabled: `rtmp`, `hls`, `api`, `metrics`, `pprof`, `playback`, `srt`
+  - Adds Google STUN server for WebRTC
+- Snapshot server:
+  - Reads mediamtx config
+  - Spawns `ffmpeg` for each RTSP camera
+  - Decodes using PyAV
+  - JPEG-encodes via TurboJPEG only when requested
+  - Dynamic endpoints: `/cam0.jpg`, `/cam1.jpg`, etc.
 
-Run from the project directory:
+---
+
+## 🚀 Installation
+
+From the project root:
 
 ```bash
 chmod +x install.sh
 ./install.sh
 ```
 
-The script will:
-- Install dependencies
-- Download the correct MediaMTX release
-- Generate camera-specific config using `generate_mediamtx_config.py`
-- Install and start both services
+This will:
 
-## Snapshot Access
+- Install dependencies via APT and pip (if needed)
+- Download MediaMTX into `mediamtx/`
+- Generate `mediamtx.yml` using `scripts/generate_mediamtx_config.py`
+- Create `.service` files from `templates/` and write to `services/`
+- Create systemd symlinks into `/etc/systemd/system/`
+- Enable and start `mediamtx` and `snapfeeder` services
+- Print available camera URLs
 
-Each detected camera gets a full set of access URLs. At the end of installation, the script prints something like:
+---
+
+## 🔍 Snapshot Access
+
+After installation, each camera is available via:
 
 ```
-🎥 cam2:
-   📡 RTSP:     rtsp://<ip>:8554/cam2
-   🖼️ Snapshot: http://<ip>:5050/cam2.jpg
-   🌐 WebRTC:   http://<ip>:8889/cam2/
+🎥 cam0:
+   📡 RTSP:     rtsp://<ip>:8554/cam0
+   🌐 WebRTC:   http://<ip>:8889/cam0/
+   🖼️ Snapshot: http://<ip>:5050/cam0.jpg
 ```
 
-## Developer Tools
+---
 
-Test configuration output without writing:
-
-```bash
-python3 generate_mediamtx_config.py --dry-run
-```
-
-## Uninstallation
+## 🧹 Uninstallation
 
 ```bash
 chmod +x uninstall.sh
@@ -74,9 +91,22 @@ chmod +x uninstall.sh
 ```
 
 This will:
-- Stop and disable services
-- Remove binaries, systemd units, and config files
 
-## License
+- Stop and disable both services
+- Remove symlinks from `/etc/systemd/system/`
+- Delete the `services/` and `mediamtx/` directories
 
-MIT
+---
+
+## 🔧 Development Notes
+
+- `generate_mediamtx_config.py` and `snapfeeder.py` use hardcoded paths relative to the project root
+- No environment variables required
+- All Python scripts are isolated in `scripts/`
+
+---
+
+## 📜 License
+
+MIT License  
+(c) 2025 Valerii Sydoruk
