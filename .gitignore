@@ -1,0 +1,4 @@
+# Ignore MediaMTX binary and config (downloaded)
+mediamtx/
+# Ignore systemd service instances (generated)
+services/
