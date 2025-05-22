@@ -83,6 +83,37 @@ After installation, each camera is available via:
 
 ---
 
+## 🌕 Moonraker Integration (Fluidd/Mainsail)
+
+To display camera streams and snapshots in Moonraker interfaces like Fluidd or Mainsail, add the following to your `moonraker.conf`:
+
+```ini
+[webcam cam0]
+service: webrtc-mediamtx                         # Streamer type
+camera_stream_url: http://<ip>:8889/cam0/        # WebRTC stream from MediaMTX
+camera_snapshot_url: http://<ip>:5050/cam0.jpg   # Snapshot from SnapFeeder
+```
+
+Repeat for additional cameras (`cam1`, `cam2`, etc.) if needed.
+
+Make sure that:
+- The ports 8889 (MediaMTX WebRTC) and 5050 (SnapFeeder) are reachable
+- Your reverse proxy (like NGINX) forwards these paths properly, if used
+
+Example for NGINX:
+
+```nginx
+location /cam0/ {
+    proxy_pass http://127.0.0.1:8889/cam0/;
+}
+
+location /cam0.jpg {
+    proxy_pass http://127.0.0.1:5050/cam0.jpg;
+}
+```
+
+---
+
 ## 🧹 Uninstallation
 
 ```bash
