@@ -70,44 +70,34 @@ def parse_mediamtx_config():
                 'latest_jpeg': None
             }
 
-# FFmpeg + PyAV capture thread for a specific camera
+# PyAV capture thread for a specific camera
 def capture_loop(name):
     """
-    Runs FFmpeg as a subprocess to pull RTSP stream,
-    decodes packets via PyAV, stores latest frame in memory.
+    Directly connects to the RTSP stream using PyAV and stores the latest raw frame.
+    JPEG encoding happens only on-demand during HTTP request.
     """
     cam = CAMERAS[name]
-    cmd = [
-        'ffmpeg',
-        '-fflags', 'nobuffer',
-        '-flags', 'low_delay',
-        '-strict', 'experimental',
-        '-fflags', '+genpts',
-        '-avioflags', 'direct',
-        '-probesize', '512k',
-        '-analyzeduration', '0',
-        '-rtsp_transport', 'tcp',
-        '-i', cam['source'],
-        '-an', '-c:v', 'copy',
-        '-f', 'mpegts',
-        '-'
-    ]
+    retry_delay = 5
 
     while True:
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            cam['process'] = proc
-            container = av.open(proc.stdout, mode='r')
+            container = av.open(
+                cam['source'],
+                options={"rtsp_transport": "tcp", "stimeout": "2000000"}  # 2s timeout
+            )
             cam['container'] = container
 
-            for packet in container.demux(video=0):
-                for frame in packet.decode():
-                    cam['latest_frame'] = frame
-                    cam['latest_jpeg'] = None
-        except av.AVError:
-            time.sleep(5)
-        except Exception:
-            time.sleep(5)
+            for frame in container.decode(video=0):
+                cam['latest_frame'] = frame
+                cam['latest_jpeg'] = None
+
+        except av.AVError as e:
+            print(f"[{name}] AVError: {e}, retrying in {retry_delay}s...")
+            time.sleep(retry_delay)
+        except Exception as e:
+            print(f"[{name}] Unexpected error: {e}")
+            time.sleep(retry_delay)
+
 
 # Flask view to return JPEG snapshot from camera
 def serve_snapshot(name):
