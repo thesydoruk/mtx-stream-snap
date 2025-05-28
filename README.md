@@ -42,8 +42,7 @@ project/
   - Adds Google STUN server for WebRTC
 - Snapshot server:
   - Reads mediamtx config
-  - Spawns `ffmpeg` for each RTSP camera
-  - Decodes using PyAV
+  - Decodes RTSP of each camera using PyAV
   - JPEG-encodes via TurboJPEG only when requested
   - Dynamic endpoints: `/cam0.jpg`, `/cam1.jpg`, etc.
 
@@ -51,11 +50,11 @@ project/
 
 ## 🚀 Installation
 
-From the project root:
-
 ```bash
-chmod +x install.sh
-./install.sh
+cd ~
+git clone https://github.com/thesydoruk/mtx-stream-snap.git
+cd mtx-stream-snap
+bash install.sh
 ```
 
 This will:
@@ -70,7 +69,7 @@ This will:
 
 ---
 
-## 🔍 Snapshot Access
+## 🔍 Camera Access
 
 After installation, each camera is available via:
 
@@ -117,8 +116,8 @@ location /cam0.jpg {
 ## 🧹 Uninstallation
 
 ```bash
-chmod +x uninstall.sh
-./uninstall.sh
+cd ~/mtx-stream-snap
+bash uninstall.sh
 ```
 
 This will:
