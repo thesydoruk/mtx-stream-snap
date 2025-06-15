@@ -54,7 +54,7 @@ project/
 cd ~
 git clone https://github.com/thesydoruk/mtx-stream-snap.git
 cd mtx-stream-snap
-sudo bash install.sh
+bash install.sh
 ```
 
 This will:
