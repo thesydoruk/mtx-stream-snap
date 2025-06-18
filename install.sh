@@ -37,14 +37,28 @@ mkdir -p "$SERVICE_DIR"
 # ------------------------------------------------------------------------------
 # Step 1: Install required system packages
 # ------------------------------------------------------------------------------
+# Define the base list of APT packages required for the project
 APT_PACKAGES=(
   curl ffmpeg v4l-utils
   python3 python3-pip
   python3-flask python3-numpy python3-av
   python3-ruamel.yaml
-  libturbojpeg0
 )
 
+# Check if either 'libturbojpeg' or 'libturbojpeg0' is available in the repository
+# and add the first available one to the package list
+if apt-cache show libturbojpeg >/dev/null 2>&1; then
+  APT_PACKAGES+=(libturbojpeg)
+elif apt-cache show libturbojpeg0 >/dev/null 2>&1; then
+  APT_PACKAGES+=(libturbojpeg0)
+else
+  # If neither version is available, print an error and exit
+  echo "❌ Neither 'libturbojpeg' nor 'libturbojpeg0' is available in the repository." >&2
+  exit 1
+fi
+
+# Check if the 'python3-turbojpeg' package is available in the repository
+# If available, include it; otherwise, mark it for installation via pip later
 if apt-cache show python3-turbojpeg >/dev/null 2>&1; then
   APT_PACKAGES+=(python3-turbojpeg)
   INSTALL_TURBOJPEG_PIP=0
@@ -52,6 +66,7 @@ else
   INSTALL_TURBOJPEG_PIP=1
 fi
 
+# Update the APT package list and install all selected packages
 echo "🔧 Installing system dependencies..."
 sudo apt update
 sudo apt install -y "${APT_PACKAGES[@]}"
