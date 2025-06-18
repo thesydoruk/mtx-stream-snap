@@ -39,11 +39,16 @@ mkdir -p "$SERVICE_DIR"
 # ------------------------------------------------------------------------------
 # Define the base list of APT packages required for the project
 APT_PACKAGES=(
-  curl ffmpeg v4l-utils
+  curl v4l-utils
   python3 python3-pip
   python3-flask python3-numpy python3-av
   python3-ruamel.yaml
 )
+
+# Check if ffmpeg is already installed; if not, add it to the list of packages to install
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  APT_PACKAGES+=(ffmpeg)
+fi
 
 # Check if either 'libturbojpeg' or 'libturbojpeg0' is available in the repository
 # and add the first available one to the package list
