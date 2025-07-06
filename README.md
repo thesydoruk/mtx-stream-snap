@@ -89,8 +89,8 @@ To display camera streams and snapshots in Moonraker interfaces like Fluidd or M
 ```ini
 [webcam cam0]
 service: webrtc-mediamtx                         # Streamer type
-camera_stream_url: http://<ip>:8889/cam0/        # WebRTC stream from MediaMTX
-camera_snapshot_url: http://<ip>:5050/cam0.jpg   # Snapshot from SnapFeeder
+stream_url: http://<ip>:8889/cam0/        # WebRTC stream from MediaMTX
+snapshot_url: http://<ip>:5050/cam0.jpg   # Snapshot from SnapFeeder
 ```
 
 Repeat for additional cameras (`cam1`, `cam2`, etc.) if needed.
