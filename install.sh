@@ -43,23 +43,12 @@ APT_PACKAGES=(
   python3 python3-pip
   python3-flask python3-numpy python3-av
   python3-ruamel.yaml
+  libturbojpeg0
 )
 
 # Check if ffmpeg is already installed; if not, add it to the list of packages to install
 if ! command -v ffmpeg >/dev/null 2>&1; then
   APT_PACKAGES+=(ffmpeg)
-fi
-
-# Check if either 'libturbojpeg' or 'libturbojpeg0' is available in the repository
-# and add the first available one to the package list
-if apt-cache show libturbojpeg >/dev/null 2>&1; then
-  APT_PACKAGES+=(libturbojpeg)
-elif apt-cache show libturbojpeg0 >/dev/null 2>&1; then
-  APT_PACKAGES+=(libturbojpeg0)
-else
-  # If neither version is available, print an error and exit
-  echo "❌ Neither 'libturbojpeg' nor 'libturbojpeg0' is available in the repository." >&2
-  exit 1
 fi
 
 # Check if the 'python3-turbojpeg' package is available in the repository
