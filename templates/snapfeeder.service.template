@@ -1,14 +1,17 @@
 [Unit]
 Description=SnapFeeder Flask Snapshot Server
-After=network.target
+After=network.target mediamtx.service
+Requires=mediamtx.service
+PartOf=mediamtx.service
 
 [Service]
 Type=simple
-WorkingDirectory=%INSTALL_DIR%/scripts
-ExecStart=/usr/bin/python3 %INSTALL_DIR%/scripts/snapfeeder.py
-Restart=always
+WorkingDirectory=__BASE_DIR__/scripts
+ExecStartPre=/bin/sleep 2
+ExecStart=__VENV_DIR__/bin/python __BASE_DIR__/scripts/snapfeeder.py
+Restart=on-failure
 RestartSec=3
-User=%USERNAME%
+User=__USERNAME__
 
 [Install]
 WantedBy=multi-user.target

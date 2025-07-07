@@ -4,11 +4,11 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=%INSTALL_DIR%/mediamtx
-ExecStart=%INSTALL_DIR%/mediamtx/mediamtx
+WorkingDirectory=__BASE_DIR__/mediamtx
+ExecStart=__BASE_DIR__/mediamtx/mediamtx
 Restart=always
 RestartSec=5
-User=%USERNAME%
+User=__USERNAME__
 
 [Install]
 WantedBy=multi-user.target

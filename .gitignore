@@ -2,3 +2,5 @@
 mediamtx/
 # Ignore systemd service instances (generated)
 services/
+# Ignore Python virtual env
+venv/
