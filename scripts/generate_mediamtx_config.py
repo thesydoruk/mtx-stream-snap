@@ -199,7 +199,7 @@ def build_ffmpeg_cmd(device, fmt, res, fps, cam_id, use_vaapi, use_rkmpp, use_v4
         "-i", device
     ]
 
-    encoder_args = ["-vf", "hqdn3d"]
+    encoder_args = []
     hwaccel_args = []
 
     if use_vaapi:
