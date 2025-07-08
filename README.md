@@ -31,6 +31,7 @@ mtx-stream-snap/
 
 ## ✅ Features
 
+- Provides an option to install an optimized FFmpeg build with hardware acceleration support on Rockchip platforms.
 - Detects all `/dev/video*` USB cameras
 - Chooses the best format:
   - Prefers `mjpeg`, falls back to others

@@ -29,6 +29,32 @@ MEDIAMTX_CONFIG="$MEDIAMTX_DIR/mediamtx.yml"
 
 USERNAME=$(whoami)
 
+# ----------------------------------------------
+# 🤖 Detect Rockchip platform (e.g., RK3588, RK3399)
+# If detected, offer to install custom FFmpeg build
+# with Rockchip hardware acceleration (MPP/RGA)
+# ----------------------------------------------
+
+# Read SoC info from device tree
+ROCKCHIP_CPU=$(tr -d '\0' < /proc/device-tree/compatible | grep -o 'rockchip,[^,]*')
+
+if [[ -n "$ROCKCHIP_CPU" ]]; then
+    echo -e "🧠  \e[33mDetected Rockchip platform:\e[0m $ROCKCHIP_CPU"
+    
+    # Prompt user to optionally install the custom FFmpeg
+    echo -e "🚀  \e[36mWould you like to install a custom FFmpeg build with Rockchip hardware acceleration (MPP/RGA)?\e[0m"
+    read -p "✅  Type 'yes' to proceed or press Enter to skip: " user_input
+
+    if [[ "$user_input" == "yes" ]]; then
+      echo -e "🔧  \e[32mLaunching FFmpeg installer...\e[0m"
+      bash "$BASE_DIR"/extras/rockchip_ffmpeg_installer.sh
+    else
+        echo -e "⏭️  \e[34mSkipping custom FFmpeg installation.\e[0m"
+    fi
+else
+    echo -e "ℹ️  \e[34mNo Rockchip platform detected. Skipping hardware-accelerated FFmpeg prompt.\e[0m"
+fi
+
 # Ensure required system packages are installed
 REQUIRED_PKGS=(python3 python3-pip python3-venv curl v4l-utils)
 MISSING_PKGS=()
