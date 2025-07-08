@@ -199,7 +199,7 @@ def build_ffmpeg_cmd(device, fmt, res, fps, cam_id, use_vaapi, use_rkmpp, use_v4
         "-i", device
     ]
 
-    encoder_args = []
+    encoder_args = ["-vf", "hqdn3d"]
     hwaccel_args = []
 
     if use_vaapi:
@@ -208,8 +208,8 @@ def build_ffmpeg_cmd(device, fmt, res, fps, cam_id, use_vaapi, use_rkmpp, use_v4
         encoder_args += ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi"]
 
     elif use_rkmpp:
-        if ("rkmpp" in AVAILABLE_HWACCELS and "drm" in AVAILABLE_HWACCELS):
-            hwaccel_args += ["-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prime"]
+        if ("rkmpp" in AVAILABLE_HWACCELS):
+            hwaccel_args += ["-hwaccel", "rkmpp"]
         encoder_args += ["-pix_fmt", "nv12", "-c:v", "h264_rkmpp"]
 
     elif use_v4l2m2m:
