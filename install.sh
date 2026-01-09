@@ -36,7 +36,10 @@ USERNAME=$(whoami)
 # ----------------------------------------------
 
 # Read SoC info from device tree
-ROCKCHIP_CPU=$(tr -d '\0' < /proc/device-tree/compatible | grep -o 'rockchip,[^,]*')
+ROCKCHIP_CPU=""
+if [ -f /proc/device-tree/compatible ]; then
+    ROCKCHIP_CPU=$(tr -d '\0' < /proc/device-tree/compatible | grep -o 'rockchip,[^,]*' || true)
+fi
 
 if [[ -n "$ROCKCHIP_CPU" ]]; then
     echo -e "🧠  \e[33mDetected Rockchip platform:\e[0m $ROCKCHIP_CPU"
