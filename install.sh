@@ -10,7 +10,7 @@
 # - Processes *.service.template files from ./templates/
 #   - Injects current user and absolute install path
 #   - Saves rendered files into ./services/
-#   - Creates symlinks into /etc/systemd/system/
+#   - Installs rendered files into /etc/systemd/system/
 # - Starts and enables systemd services
 # ==============================================================================
 
@@ -133,7 +133,7 @@ chmod 644 "$MEDIAMTX_CONFIG"
 # Render systemd service templates
 mkdir -p "$RENDERED_DIR"
 
-# Render .service files from templates and symlink to systemd
+# Render .service files from templates and install to systemd
 for template in "$TEMPLATE_DIR"/*.service.template; do
   base=$(basename "$template" .template)
   output="$RENDERED_DIR/$base"
@@ -148,9 +148,9 @@ for template in "$TEMPLATE_DIR"/*.service.template; do
     -e "s|__USERNAME__|$USERNAME|g" \
     "$template" > "$output"
 
-  # Create symlink to systemd
-  echo "🔗 Linking $base → $systemd_target"
-  sudo ln -sf "$output" "$systemd_target"
+  # Install rendered service file into systemd directory
+  echo "📦 Installing $base → $systemd_target"
+  sudo install -m 644 "$output" "$systemd_target"
 done
 
 # Reload systemd and enable/start services

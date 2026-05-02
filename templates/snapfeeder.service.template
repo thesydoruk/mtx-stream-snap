@@ -1,8 +1,11 @@
 [Unit]
 Description=SnapFeeder Flask Snapshot Server
-After=network.target mediamtx.service
+After=network.target local-fs.target mediamtx.service
 Requires=mediamtx.service
 PartOf=mediamtx.service
+RequiresMountsFor=__BASE_DIR__
+ConditionPathIsDirectory=__BASE_DIR__/scripts
+ConditionPathExists=__VENV_DIR__/bin/python
 
 [Service]
 Type=simple

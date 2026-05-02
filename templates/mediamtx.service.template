@@ -1,6 +1,9 @@
 [Unit]
 Description=MediaMTX RTSP/WebRTC Server
-After=network.target
+After=network.target local-fs.target
+RequiresMountsFor=__BASE_DIR__
+ConditionPathIsDirectory=__BASE_DIR__/mediamtx
+ConditionPathExists=__BASE_DIR__/mediamtx/mediamtx
 
 [Service]
 Type=simple

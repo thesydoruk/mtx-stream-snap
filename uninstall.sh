@@ -5,7 +5,7 @@
 # --------------------------------------------
 # - Stops and disables systemd services
 # - Removes python virtual env
-# - Removes generated service files and symlinks
+# - Removes installed/generated systemd service files
 # - Deletes MediaMTX installation directory
 # - Cleans up the services/ folder
 # ==============================================================================
@@ -32,8 +32,8 @@ for svc in "${SERVICES[@]}"; do
   fi
 
   TARGET="$SERVICE_DIR/$svc"
-  if [ -L "$TARGET" ]; then
-    echo "🗑️  Removing symlink: $TARGET"
+  if [ -e "$TARGET" ] || [ -L "$TARGET" ]; then
+    echo "🗑️  Removing unit file: $TARGET"
     sudo rm -f "$TARGET"
   fi
 done
