@@ -26,6 +26,7 @@ from pathlib import Path
 # Config path relative to this script (scripts/) → ../mediamtx/mediamtx.yml
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "mediamtx" / "mediamtx.yml"
 PREFERRED_RES = "1280x720"
+MAX_DEFAULT_FPS = 30
 FORMAT_PRIORITY = ["mjpeg", "h264", "nv12", "yuv420", "yuyv422", "rawvideo"]
 FORMAT_ALIASES = {
     "mjpg": "mjpeg",
@@ -179,7 +180,7 @@ def select_best_format(formats_by_type):
             PREFERRED_RES if PREFERRED_RES in resolutions else
             sorted(resolutions, key=lambda r: tuple(map(int, r.split('x'))), reverse=True)[0]
         )
-        fps = max(resolutions[resolution])
+        fps = min(max(resolutions[resolution]), MAX_DEFAULT_FPS)
         return fmt, resolution, fps
 
     return None, None, None

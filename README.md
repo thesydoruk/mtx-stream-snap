@@ -36,7 +36,7 @@ mtx-stream-snap/
 - Chooses the best format:
   - Prefers `mjpeg`, falls back to others
   - Picks `1280x720` if supported, otherwise selects the highest available resolution
-  - Uses maximum FPS for the chosen resolution
+  - Caps default FPS at `30` for the chosen resolution
 - Leverages hardware acceleration if available:
   - ✅ VAAPI (Intel/AMD GPU)
   - ✅ RKMMP (Rockchip)
@@ -69,8 +69,8 @@ This will:
 - Download the latest MediaMTX release into `mediamtx/`
 - Generate `mediamtx.yml` using `scripts/generate_mediamtx_config.py`
 - Create `.service` files from `templates/` and write them to `services/`
-- Create systemd symlinks in `/etc/systemd/system/`
-- Enable and start `mediamtx` and `snapfeeder` services (SnapFeeder waits for MediaMTX)
+- Install rendered systemd unit files into `/etc/systemd/system/`
+- Enable and start `mediamtx` and `snapfeeder` services (with startup readiness checks)
 - Print available camera URLs
 
 ---
@@ -149,8 +149,38 @@ bash uninstall.sh
 This will:
 
 - Stop and disable both services
-- Remove symlinks from `/etc/systemd/system/`
+- Remove service files from `/etc/systemd/system/`
 - Delete the `services/`, `mediamtx/` and `venv/` directories
+
+---
+
+## ⚙️ Manual Resolution / FPS Tuning
+
+If you want to use a custom resolution or framerate, edit `mediamtx/mediamtx.yml` manually.
+
+Each camera (`cam0`, `cam1`, etc.) has a `runOnInit` FFmpeg command, for example:
+
+```yaml
+paths:
+  cam0:
+    source: publisher
+    runOnInit: ffmpeg -y -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 30 -i /dev/video0 ...
+    runOnInitRestart: yes
+```
+
+Change these two arguments in `runOnInit`:
+- `-video_size 1280x720` → your target resolution (for example `1920x1080`)
+- `-framerate 30` → your target FPS (for example `25`)
+
+After editing, apply changes:
+
+```bash
+sudo systemctl restart mediamtx.service
+```
+
+Notes:
+- Use only modes supported by your camera (`v4l2-ctl --list-formats-ext -d /dev/videoX`).
+- `install.sh` regenerates `mediamtx.yml`, so rerunning install can overwrite manual camera settings.
 
 ---
 
