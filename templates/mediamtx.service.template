@@ -11,6 +11,7 @@ ConditionPathExists=__VENV_DIR__/bin/python
 Type=simple
 WorkingDirectory=__BASE_DIR__/mediamtx
 ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do ls /dev/video* >/dev/null 2>&1 && exit 0; sleep 1; done; echo "No /dev/video* found after 30s, continuing anyway." >&2; exit 0'
+ExecStartPre=/bin/sleep 5
 ExecStart=__BASE_DIR__/mediamtx/mediamtx
 Restart=always
 RestartSec=5
