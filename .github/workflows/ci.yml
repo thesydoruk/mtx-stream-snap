@@ -34,23 +34,33 @@ jobs:
           echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::VERSION must be X.Y.Z, got '$version'"; exit 1; }
           grep -q "^## \[$version\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no '## [$version]' section"; exit 1; }
 
+  # Installs dependencies with install.sh on each distro (as root, no sudo),
+  # then runs MediaMTX + snapfeeder end to end with a synthetic camera
   smoke:
-    runs-on: ubuntu-24.04
+    name: smoke (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.13"]
+        include:
+          - { name: debian-12,       image: "debian:12",           runner: ubuntu-24.04 }
+          - { name: debian-13,       image: "debian:13",           runner: ubuntu-24.04 }
+          - { name: ubuntu-22.04,    image: "ubuntu:22.04",        runner: ubuntu-24.04 }
+          - { name: ubuntu-24.04,    image: "ubuntu:24.04",        runner: ubuntu-24.04 }
+          - { name: fedora,          image: "fedora:latest",       runner: ubuntu-24.04 }
+          - { name: archlinux,       image: "archlinux:latest",    runner: ubuntu-24.04 }
+          - { name: opensuse,        image: "opensuse/tumbleweed", runner: ubuntu-24.04 }
+          - { name: debian-12-arm64, image: "debian:12",           runner: ubuntu-24.04-arm }
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v7
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install system packages
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg libturbojpeg
+      - name: Install dependencies (install.sh --deps-only)
+        run: bash install.sh --deps-only
 
       - name: End-to-end smoke test
-        run: bash tests/smoke_test.sh
+        run: VENV_DIR="$PWD/venv" bash tests/smoke_test.sh

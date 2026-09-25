@@ -5,12 +5,14 @@
 # ------------------------------------------------------------------------------
 # - Works in a temporary copy, never touches ./mediamtx/, ./venv/ or services
 # - Installs Python deps from venv-requirements.txt into a temporary venv
+#   (or uses an existing one: VENV_DIR=/path/to/venv, e.g. from install.sh --deps-only)
 # - Downloads the MediaMTX version pinned in install.sh
 # - Runs generate_mediamtx_config.py against its default mediamtx.yml
-# - Adds a synthetic camera (ffmpeg testsrc2) as cam0
+# - Adds a synthetic camera (ffmpeg testsrc2) as cam0, encoded with the
+#   encoder the generator picks on this system
 # - Starts MediaMTX + snapfeeder and checks that /cam0.jpg returns a JPEG
 #
-# Requires: python3 (with venv), ffmpeg, curl, libturbojpeg.
+# Requires: python3 (with venv), ffmpeg, curl; libturbojpeg is optional.
 # Ports 8554 and 5050 must be free (stop the installed services first).
 # ==============================================================================
 
@@ -54,11 +56,17 @@ echo "🔧 Preparing work dir $WORK_DIR"
 cp -r "$ROOT_DIR/scripts" "$WORK_DIR/scripts"
 mkdir -p "$WORK_DIR/mediamtx"
 
-echo "🐍 Installing Python dependencies"
-python3 -m venv "$WORK_DIR/venv"
-"$WORK_DIR/venv/bin/pip" install -q --upgrade pip wheel
-"$WORK_DIR/venv/bin/pip" install -q -r "$ROOT_DIR/venv-requirements.txt"
-PY="$WORK_DIR/venv/bin/python"
+if [ -n "${VENV_DIR:-}" ]; then
+  echo "🐍 Using existing virtual environment $VENV_DIR"
+  PY="$VENV_DIR/bin/python"
+else
+  echo "🐍 Installing Python dependencies"
+  python3 -m venv "$WORK_DIR/venv"
+  "$WORK_DIR/venv/bin/python" -m pip install -q --upgrade pip wheel
+  "$WORK_DIR/venv/bin/python" -m pip install -q --prefer-binary -r "$ROOT_DIR/venv-requirements.txt"
+  PY="$WORK_DIR/venv/bin/python"
+fi
+[ -x "$PY" ] || fail "Python not found at $PY"
 
 echo "⬇️  Downloading MediaMTX $MEDIAMTX_VERSION ($PLATFORM)"
 curl -fsSL -o "$WORK_DIR/mediamtx.tar.gz" \
@@ -69,11 +77,13 @@ echo "🛠️  Generating config"
 "$PY" "$WORK_DIR/scripts/generate_mediamtx_config.py" || fail "Config generator failed"
 
 echo "🎥 Adding synthetic camera cam0"
-"$PY" - "$WORK_DIR/mediamtx/mediamtx.yml" <<'EOF'
+"$PY" - "$WORK_DIR/mediamtx/mediamtx.yml" "$WORK_DIR/scripts" <<'EOF'
 import sys
 from ruamel.yaml import YAML
 
 path = sys.argv[1]
+sys.path.insert(0, sys.argv[2])
+import generate_mediamtx_config as gen
 yaml = YAML()
 # MediaMTX parses YAML 1.1: unquoting values like "no" turns them into booleans
 yaml.preserve_quotes = True
@@ -87,11 +97,14 @@ for key in ["rtmp", "api", "metrics", "pprof", "playback", "srt"]:
 assert "all_others" in config["paths"], "all_others path must be preserved"
 
 all_others = config["paths"].pop("all_others")
+encoder = gen.detect_encoder()
+assert encoder is not None, "no working H.264 encoder"
+denoise = gen.has_filter("hqdn3d")
+print(f"   encoder: {encoder['name']}, denoise: {denoise}")
+input_args = ["-re", "-f", "lavfi", "-i", "testsrc2=size=640x480:rate=10"]
 config["paths"]["cam0"] = {
     "source": "publisher",
-    "runOnInit": "ffmpeg -hide_banner -nostats -loglevel warning -re -f lavfi -i testsrc2=size=640x480:rate=10 "
-                 "-c:v libx264 -preset ultrafast -tune zerolatency -g 10 -bf 0 "
-                 "-f rtsp rtsp://localhost:8554/cam0",
+    "runOnInit": gen.build_ffmpeg_cmd(input_args, 10, "cam0", encoder, denoise, gen.list_available_hwaccels()),
     "runOnInitRestart": True,
 }
 config["paths"]["all_others"] = all_others
@@ -110,23 +123,41 @@ for _ in $(seq 1 30); do
 done
 (echo >/dev/tcp/127.0.0.1/8554) >/dev/null 2>&1 || fail "MediaMTX did not open RTSP port 8554"
 
-echo "🚀 Starting snapfeeder"
-"$PY" "$WORK_DIR/scripts/snapfeeder.py" >"$WORK_DIR/snapfeeder.log" 2>&1 &
-PIDS+=($!)
+# Starts snapfeeder with the given JPEG encoder ("auto" or "pyav") and checks
+# that it serves a real JPEG for cam0 and 404 for unknown cameras
+check_snapfeeder() {
+  local encoder="$1"
+  local log="$WORK_DIR/snapfeeder-$encoder.log"
+  local snapshot="$WORK_DIR/cam0-$encoder.jpg"
+  local code="" magic pid
 
-echo "🖼️  Waiting for snapshot"
-SNAPSHOT="$WORK_DIR/cam0.jpg"
-for _ in $(seq 1 60); do
-  code=$(curl -s -o "$SNAPSHOT" -w '%{http_code}' http://127.0.0.1:5050/cam0.jpg || true)
-  [ "$code" = "200" ] && break
-  sleep 1
-done
-[ "${code:-}" = "200" ] || fail "Snapshot endpoint did not return 200 (last status: ${code:-none})"
+  echo "🚀 Starting snapfeeder (JPEG encoder: $encoder)"
+  PYTHONUNBUFFERED=1 SNAPFEEDER_JPEG_ENCODER="$encoder"     "$PY" "$WORK_DIR/scripts/snapfeeder.py" >"$log" 2>&1 &
+  pid=$!
+  PIDS+=("$pid")
 
-magic=$(head -c 3 "$SNAPSHOT" | od -An -tx1 | tr -d ' \n')
-[ "$magic" = "ffd8ff" ] || fail "Snapshot is not a JPEG (magic: $magic)"
+  for _ in $(seq 1 60); do
+    code=$(curl -s -o "$snapshot" -w '%{http_code}' http://127.0.0.1:5050/cam0.jpg || true)
+    [ "$code" = "200" ] && break
+    sleep 1
+  done
+  [ "$code" = "200" ] || fail "[$encoder] Snapshot endpoint did not return 200 (last status: ${code:-none})"
 
-code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5050/nope.jpg || true)
-[ "$code" = "404" ] || fail "Unknown camera should return 404 (got $code)"
+  magic=$(head -c 3 "$snapshot" | od -An -tx1 | tr -d ' 
+')
+  [ "$magic" = "ffd8ff" ] || fail "[$encoder] Snapshot is not a JPEG (magic: $magic)"
 
-echo "✅ Smoke test passed ($(wc -c <"$SNAPSHOT") byte JPEG)"
+  code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5050/nope.jpg || true)
+  [ "$code" = "404" ] || fail "[$encoder] Unknown camera should return 404 (got $code)"
+
+  echo "✅ [$encoder] $(wc -c <"$snapshot") byte JPEG, $(grep -m1 'JPEG encoder' "$log" || echo 'JPEG encoder: ?')"
+
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
+
+check_snapfeeder auto
+# Fallback path used when libturbojpeg is missing or incompatible
+check_snapfeeder pyav
+
+echo "✅ Smoke test passed"
