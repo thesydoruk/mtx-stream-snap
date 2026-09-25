@@ -75,6 +75,8 @@ from ruamel.yaml import YAML
 
 path = sys.argv[1]
 yaml = YAML()
+# MediaMTX parses YAML 1.1: unquoting values like "no" turns them into booleans
+yaml.preserve_quotes = True
 with open(path) as f:
     config = yaml.load(f)
 
