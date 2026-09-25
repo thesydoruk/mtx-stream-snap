@@ -245,9 +245,9 @@ with CONFIG_PATH.open("r") as f:
 
 # Enable desired protocols and disable others
 for key in FLAGS_OFF:
-    config[key] = "no"
+    config[key] = False
 for key in FLAGS_ON:
-    config[key] = "yes"
+    config[key] = True
 
 # Add WebRTC ICE STUN server
 config["webrtcICEServers2"] = [{"url": "stun:stun.l.google.com:19302"}]
@@ -283,7 +283,7 @@ for dev in list_video_devices():
     config["paths"][cam_id] = {
         "source": "publisher",
         "runOnInit": build_ffmpeg_cmd(dev, fmt, res, fps, cam_id, use_vaapi, use_rkmpp, use_v4l2m2m),
-        "runOnInitRestart": "yes"
+        "runOnInitRestart": True
     }
 
 # Reattach all_others

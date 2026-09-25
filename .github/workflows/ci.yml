@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Shell syntax
+        run: for f in install.sh uninstall.sh extras/*.sh tests/*.sh; do bash -n "$f"; done
+
+      - name: ShellCheck
+        run: shellcheck --severity=warning install.sh uninstall.sh extras/*.sh tests/*.sh
+
+      - name: Python syntax
+        run: python -m py_compile scripts/*.py
+
+      - name: VERSION has a CHANGELOG entry
+        run: |
+          version="$(cat VERSION)"
+          echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::VERSION must be X.Y.Z, got '$version'"; exit 1; }
+          grep -q "^## \[$version\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no '## [$version]' section"; exit 1; }
+
+  smoke:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg libturbojpeg
+
+      - name: End-to-end smoke test
+        run: bash tests/smoke_test.sh

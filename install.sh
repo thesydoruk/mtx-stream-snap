@@ -5,16 +5,35 @@
 # ----------------------------------------
 # - Installs dependencies via APT and pip if needed
 # - Creates Python virtual environment in ./venv/
-# - Downloads MediaMTX and places it into ./mediamtx/
+# - Downloads MediaMTX (pinned version) and places it into ./mediamtx/
 # - Generates mediamtx.yml using scripts/generate_mediamtx_config.py
+#   (an existing mediamtx.yml is kept on upgrade unless --regenerate-config)
 # - Processes *.service.template files from ./templates/
 #   - Injects current user and absolute install path
 #   - Saves rendered files into ./services/
 #   - Installs rendered files into /etc/systemd/system/
 # - Starts and enables systemd services
+#
+# Usage: bash install.sh [--regenerate-config]
+#
+# Environment:
+#   MEDIAMTX_VERSION  MediaMTX release tag to install (default: tested version
+#                     below; "latest" picks the newest GitHub release)
 # ==============================================================================
 
 set -e
+
+# MediaMTX release this version of the project is tested with
+MEDIAMTX_VERSION="${MEDIAMTX_VERSION:-v1.21.1}"
+
+REGENERATE_CONFIG=0
+for arg in "$@"; do
+  case "$arg" in
+    --regenerate-config) REGENERATE_CONFIG=1 ;;
+    -h|--help) sed -n '3,22p' "$0"; exit 0 ;;
+    *) echo "❌ Unknown option: $arg"; exit 1 ;;
+  esac
+done
 
 # Define directories
 BASE_DIR="$(dirname "$(realpath "$0")")"
@@ -28,6 +47,9 @@ MEDIAMTX_BIN="$MEDIAMTX_DIR/mediamtx"
 MEDIAMTX_CONFIG="$MEDIAMTX_DIR/mediamtx.yml"
 
 USERNAME=$(whoami)
+PROJECT_VERSION=$(cat "$BASE_DIR/VERSION" 2>/dev/null || echo "unknown")
+
+echo "📦 mtx-stream-snap $PROJECT_VERSION (MediaMTX $MEDIAMTX_VERSION)"
 
 # ----------------------------------------------
 # 🤖 Detect Rockchip platform (e.g., RK3588, RK3399)
@@ -104,11 +126,14 @@ pip install --upgrade pip wheel
 pip install -r "$BASE_DIR/venv-requirements.txt"
 deactivate
 
-# Download latest MediaMTX binary
-VERSION=$(curl -fsSL https://api.github.com/repos/bluenviron/mediamtx/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
-if [ -z "$VERSION" ]; then
-  echo "❌ Failed to determine the latest MediaMTX version (GitHub API unreachable or rate-limited)."
-  exit 1
+# Download MediaMTX binary
+VERSION="$MEDIAMTX_VERSION"
+if [ "$VERSION" = "latest" ]; then
+  VERSION=$(curl -fsSL https://api.github.com/repos/bluenviron/mediamtx/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
+  if [ -z "$VERSION" ]; then
+    echo "❌ Failed to determine the latest MediaMTX version (GitHub API unreachable or rate-limited)."
+    exit 1
+  fi
 fi
 ARCH=$(uname -m)
 case "$ARCH" in
@@ -121,7 +146,7 @@ esac
 
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
-cd "$TMP_DIR"
+cd "$TMP_DIR" || exit 1
 echo "⬇️  Downloading MediaMTX $VERSION for $PLATFORM..."
 curl -fL -o mediamtx.tar.gz "https://github.com/bluenviron/mediamtx/releases/download/${VERSION}/mediamtx_${VERSION}_${PLATFORM}.tar.gz"
 tar -xzf mediamtx.tar.gz
@@ -129,11 +154,22 @@ tar -xzf mediamtx.tar.gz
 mkdir -p "$MEDIAMTX_DIR"
 mv mediamtx "$MEDIAMTX_BIN"
 chmod +x "$MEDIAMTX_BIN"
-mv mediamtx.yml "$MEDIAMTX_CONFIG"
-chmod 644 "$MEDIAMTX_CONFIG"
 
-# Generate MediaMTX config
-"$VENV_DIR/bin/python" "$SCRIPTS_DIR/generate_mediamtx_config.py"
+# Keep an existing config on upgrade so manual tuning survives
+if [ -f "$MEDIAMTX_CONFIG" ] && [ "$REGENERATE_CONFIG" -eq 0 ]; then
+  echo "ℹ️  Keeping existing $MEDIAMTX_CONFIG (use --regenerate-config to recreate it)"
+else
+  if [ -f "$MEDIAMTX_CONFIG" ]; then
+    BACKUP="$MEDIAMTX_CONFIG.bak.$(date +%Y%m%d%H%M%S)"
+    echo "💾 Backing up current config to $BACKUP"
+    cp "$MEDIAMTX_CONFIG" "$BACKUP"
+  fi
+  mv mediamtx.yml "$MEDIAMTX_CONFIG"
+  chmod 644 "$MEDIAMTX_CONFIG"
+
+  # Generate MediaMTX config
+  "$VENV_DIR/bin/python" "$SCRIPTS_DIR/generate_mediamtx_config.py"
+fi
 
 # Render systemd service templates
 mkdir -p "$RENDERED_DIR"

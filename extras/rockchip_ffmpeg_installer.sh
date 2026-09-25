@@ -11,6 +11,10 @@ CYAN="\e[36m"
 RED="\e[31m"
 RESET="\e[0m"
 
+# Stop on the first failed step instead of installing a half-built FFmpeg
+set -e
+trap 'echo -e "${RED}❌ Rockchip FFmpeg installation failed (line $LINENO).${RESET}"' ERR
+
 # ----------------------------------------------
 # Prepare clean development environment
 # ----------------------------------------------

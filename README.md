@@ -1,5 +1,8 @@
 # MediaMTX + SnapFeeder Auto Installer
 
+[![CI](https://github.com/thesydoruk/mtx-stream-snap/actions/workflows/ci.yml/badge.svg)](https://github.com/thesydoruk/mtx-stream-snap/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/thesydoruk/mtx-stream-snap)](https://github.com/thesydoruk/mtx-stream-snap/releases)
+
 This project provides a complete, self-contained RTSP + JPEG snapshot system using:
 
 - **MediaMTX** for RTSP and WebRTC streaming with FFmpeg backend
@@ -12,8 +15,10 @@ This project provides a complete, self-contained RTSP + JPEG snapshot system usi
 
 ```
 mtx-stream-snap/
-├── install.sh                # Full setup script
+├── install.sh                # Full setup script (also used for upgrades)
 ├── uninstall.sh              # Cleanup script
+├── VERSION                   # Current project version
+├── CHANGELOG.md              # Release notes
 ├── mediamtx/                 # Holds downloaded MediaMTX binary and mediamtx.yml
 │   ├── mediamtx
 │   └── mediamtx.yml
@@ -23,6 +28,8 @@ mtx-stream-snap/
 ├── templates/                # Template .service files with placeholders
 │   ├── mediamtx.service.template
 │   └── snapfeeder.service.template
+├── tests/
+│   └── smoke_test.sh         # End-to-end test used by CI
 ├── venv/                     # Python virtual environment
 └── services/                 # Populated during install with rendered .service files
 ```
@@ -55,23 +62,50 @@ mtx-stream-snap/
 
 ## 🚀 Installation
 
+Install a released version (see [Releases](https://github.com/thesydoruk/mtx-stream-snap/releases) for the latest tag):
+
 ```bash
 cd ~
-git clone https://github.com/thesydoruk/mtx-stream-snap.git
+git clone --branch v1.0.0 --depth 1 https://github.com/thesydoruk/mtx-stream-snap.git
 cd mtx-stream-snap
 bash install.sh
 ```
+
+Cloning without `--branch` installs the development version from `main`.
 
 This will:
 
 - Install system dependencies via APT (including `python3-venv` and `libturbojpeg`)
 - Create a Python virtual environment
-- Download the latest MediaMTX release into `mediamtx/`
-- Generate `mediamtx.yml` using `scripts/generate_mediamtx_config.py`
+- Download the MediaMTX release tested with this version into `mediamtx/`
+  (override with `MEDIAMTX_VERSION=v1.x.y bash install.sh`, or `MEDIAMTX_VERSION=latest`)
+- Generate `mediamtx.yml` using `scripts/generate_mediamtx_config.py` (only if it does not exist yet)
 - Create `.service` files from `templates/` and write them to `services/`
 - Install rendered systemd unit files into `/etc/systemd/system/`
 - Enable and start `mediamtx` and `snapfeeder` services (with startup readiness checks)
 - Print available camera URLs
+
+---
+
+## ⬆️ Upgrading
+
+```bash
+cd ~/mtx-stream-snap
+git fetch --tags
+git checkout v1.1.0        # the release you want
+bash install.sh
+```
+
+`install.sh` updates MediaMTX, the Python environment and the services, but keeps your
+existing `mediamtx/mediamtx.yml`. To recreate it from scratch (for example after connecting
+new cameras), run:
+
+```bash
+bash install.sh --regenerate-config
+```
+
+The previous config is saved as `mediamtx.yml.bak.<timestamp>`.
+See [CHANGELOG.md](CHANGELOG.md) for what changed between versions.
 
 ---
 
@@ -165,7 +199,7 @@ paths:
   cam0:
     source: publisher
     runOnInit: ffmpeg -y -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 30 -i /dev/video0 ...
-    runOnInitRestart: yes
+    runOnInitRestart: true
 ```
 
 Change these two arguments in `runOnInit`:
@@ -180,7 +214,7 @@ sudo systemctl restart mediamtx.service
 
 Notes:
 - Use only modes supported by your camera (`v4l2-ctl --list-formats-ext -d /dev/videoX`).
-- `install.sh` regenerates `mediamtx.yml`, so rerunning install can overwrite manual camera settings.
+- Rerunning `install.sh` keeps your edited `mediamtx.yml`; only `bash install.sh --regenerate-config` overwrites it (with a backup).
 
 ---
 
@@ -189,6 +223,33 @@ Notes:
 - `generate_mediamtx_config.py` and `snapfeeder.py` use project-root-relative paths
 - No environment variables are required
 - All Python logic is inside the `scripts/` directory
+- `bash tests/smoke_test.sh` runs the end-to-end test locally on Linux (needs `ffmpeg`,
+  `libturbojpeg` and free ports 8554/5050, so stop the installed services first)
+
+---
+
+## 🏷️ Releasing
+
+CI runs on every push to `main` and on pull requests: ShellCheck, syntax checks and an
+end-to-end smoke test (MediaMTX + snapfeeder with a synthetic camera).
+
+To publish a release:
+
+1. Move the entries from `## [Unreleased]` in `CHANGELOG.md` to a new `## [X.Y.Z] - YYYY-MM-DD` section
+   and update the links at the bottom.
+2. Put `X.Y.Z` into `VERSION`.
+3. If a newer MediaMTX was tested, bump `MEDIAMTX_VERSION` in `install.sh`.
+4. Commit, then tag and push:
+   ```bash
+   git tag vX.Y.Z
+   git push origin main vX.Y.Z
+   ```
+
+The `Release` workflow re-runs CI, checks that the tag matches `VERSION` and creates a
+GitHub Release with the notes from `CHANGELOG.md`.
+
+Versioning follows [SemVer](https://semver.org/): `PATCH` for fixes, `MINOR` for new
+features, `MAJOR` for changes that require manual steps when upgrading.
 
 ---
 
