@@ -33,6 +33,9 @@ First versioned release.
 - `hqdn3d` filter is no longer dropped for VAAPI (single `-vf` chain), and
   `-vaapi_device` is always passed for `hwupload`.
 - `-tune zerolatency` is applied only to libx264.
+- snapfeeder no longer crashes on startup with PyTurboJPEG 2.x: it requires
+  libjpeg-turbo 3.0, which Debian, Ubuntu and Raspberry Pi OS do not ship, so
+  PyTurboJPEG is limited to 1.x.
 - Valid `-input_format` names for YU12/RGB3/BGR3 cameras.
 - `install.sh` fails with a clear message when the MediaMTX download fails.
 - `uninstall.sh` stops services even when they are not enabled.

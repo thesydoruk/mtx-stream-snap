@@ -89,7 +89,7 @@ assert "all_others" in config["paths"], "all_others path must be preserved"
 all_others = config["paths"].pop("all_others")
 config["paths"]["cam0"] = {
     "source": "publisher",
-    "runOnInit": "ffmpeg -re -f lavfi -i testsrc2=size=640x480:rate=10 "
+    "runOnInit": "ffmpeg -hide_banner -nostats -loglevel warning -re -f lavfi -i testsrc2=size=640x480:rate=10 "
                  "-c:v libx264 -preset ultrafast -tune zerolatency -g 10 -bf 0 "
                  "-f rtsp rtsp://localhost:8554/cam0",
     "runOnInitRestart": True,
