@@ -85,7 +85,7 @@ Install a released version (see [Releases](https://github.com/thesydoruk/mtx-str
 
 ```bash
 cd ~
-git clone --branch v1.0.0 --depth 1 https://github.com/thesydoruk/mtx-stream-snap.git
+git clone --branch v1.1.0 --depth 1 https://github.com/thesydoruk/mtx-stream-snap.git
 cd mtx-stream-snap
 bash install.sh
 ```

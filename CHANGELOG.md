@@ -6,6 +6,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-25
+
 ### Added
 - Support for Fedora, Arch Linux and openSUSE in addition to Debian/Ubuntu:
   `install.sh` detects `apt`, `dnf`, `pacman` or `zypper` and picks the right package names.
@@ -79,6 +81,7 @@ First versioned release.
 - `uninstall.sh` stops services even when they are not enabled.
 - `mediamtx.service` no longer depends on the Python venv.
 
-[Unreleased]: https://github.com/thesydoruk/mtx-stream-snap/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/thesydoruk/mtx-stream-snap/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/thesydoruk/mtx-stream-snap/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/thesydoruk/mtx-stream-snap/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/thesydoruk/mtx-stream-snap/releases/tag/v1.0.0
