@@ -48,6 +48,8 @@ mtx-stream-snap/
   - ✅ VAAPI (Intel/AMD GPU)
   - ✅ RKMPP (Rockchip)
   - ✅ V4L2M2M (Raspberry Pi)
+  - Software fallback: `libx264`, or `libopenh264` where the distro's ffmpeg has no x264
+  - Each encoder is verified with a test encode before it is used
 - Configures `mediamtx.yml` with:
   - Enabled: `rtsp`, `webrtc`, `hls`
   - Disabled: `rtmp`, `api`, `metrics`, `pprof`, `playback`, `srt`
@@ -56,11 +58,28 @@ mtx-stream-snap/
   - Reads the MediaMTX config
   - Decodes RTSP of each camera using PyAV
   - Encodes JPEG snapshots via TurboJPEG only when requested
+    (falls back to PyAV's built-in MJPEG encoder when libturbojpeg is missing or incompatible)
   - Provides dynamic endpoints: `/cam0.jpg`, `/cam1.jpg`, etc.
 
 ---
 
 ## 🚀 Installation
+
+### Supported systems
+
+Any systemd-based Linux with one of these package managers: `apt`, `dnf`, `pacman`, `zypper`.
+Every change is tested in CI on:
+
+| Distribution | Architectures |
+|---|---|
+| Debian 12, 13 (also Raspberry Pi OS, Armbian, DietPi) | amd64, arm64 |
+| Ubuntu 22.04, 24.04 | amd64 |
+| Fedora (latest) | amd64 |
+| Arch Linux | amd64 |
+| openSUSE Tumbleweed | amd64 |
+
+On Fedora and openSUSE the stock ffmpeg has no x264, so streams are encoded with OpenH264
+(installed automatically) unless a hardware encoder is available.
 
 Install a released version (see [Releases](https://github.com/thesydoruk/mtx-stream-snap/releases) for the latest tag):
 
@@ -75,7 +94,9 @@ Cloning without `--branch` installs the development version from `main`.
 
 This will:
 
-- Install system dependencies via APT (including `python3-venv` and `libturbojpeg`)
+- Install system dependencies with the system package manager (`libturbojpeg` and OpenH264 are
+  optional and installed when the distro provides them)
+- Add the service to the `video` and `render` groups (when they exist) for camera and GPU access
 - Create a Python virtual environment
 - Download the MediaMTX release tested with this version into `mediamtx/`
   (override with `MEDIAMTX_VERSION=v1.x.y bash install.sh`, or `MEDIAMTX_VERSION=latest`)
@@ -223,15 +244,18 @@ Notes:
 - `generate_mediamtx_config.py` and `snapfeeder.py` use project-root-relative paths
 - No environment variables are required
 - All Python logic is inside the `scripts/` directory
-- `bash tests/smoke_test.sh` runs the end-to-end test locally on Linux (needs `ffmpeg`,
-  `libturbojpeg` and free ports 8554/5050, so stop the installed services first)
+- `bash tests/smoke_test.sh` runs the end-to-end test locally on Linux (needs `ffmpeg` and free
+  ports 8554/5050, so stop the installed services first). `bash install.sh --deps-only` installs
+  just the dependencies; pass `VENV_DIR=$PWD/venv` to the smoke test to reuse that venv.
+- `SNAPFEEDER_JPEG_ENCODER=pyav` forces snapfeeder to use the PyAV JPEG encoder
 
 ---
 
 ## 🏷️ Releasing
 
 CI runs on every push to `main` and on pull requests: ShellCheck, syntax checks and an
-end-to-end smoke test (MediaMTX + snapfeeder with a synthetic camera).
+end-to-end smoke test (`install.sh --deps-only`, then MediaMTX + snapfeeder with a synthetic
+camera) in containers of every supported distribution.
 
 To publish a release:
 

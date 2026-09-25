@@ -6,6 +6,32 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Support for Fedora, Arch Linux and openSUSE in addition to Debian/Ubuntu:
+  `install.sh` detects `apt`, `dnf`, `pacman` or `zypper` and picks the right package names.
+- Automatic H.264 encoder selection with a test encode: VAAPI, RKMPP, V4L2M2M, libx264,
+  then libopenh264 (for distros whose ffmpeg has no x264). The `hqdn3d` filter is used
+  only when the ffmpeg build provides it.
+- snapfeeder falls back to PyAV's MJPEG encoder when libturbojpeg is missing or
+  incompatible (`SNAPFEEDER_JPEG_ENCODER=pyav` forces it).
+- `install.sh --deps-only` and running the installer as root without `sudo`.
+- CI runs the smoke test on Debian 12/13, Ubuntu 22.04/24.04, Fedora, Arch Linux,
+  openSUSE Tumbleweed and Debian 12 on arm64, with both JPEG encoders.
+
+### Changed
+- libturbojpeg is optional; the installer no longer stops when it is not packaged.
+- pip prefers releases with prebuilt wheels; when PyAV still cannot be installed (e.g. armv7
+  without wheels) the distro's PyAV package is used through the venv.
+- PyAV `>=10` is accepted, so older distro packages qualify for that fallback.
+- `mediamtx.service` joins the `video` and `render` groups (those that exist) for camera
+  and GPU access, which is needed on distros that do not grant it to regular users.
+
+### Fixed
+- Software encoding outputs 4:2:0 (`-pix_fmt yuv420p`): MJPEG cameras produced 4:2:2
+  H.264 that browsers cannot play over WebRTC/HLS.
+- snapfeeder output reaches the journal immediately (`PYTHONUNBUFFERED=1`).
+- The Rockchip FFmpeg prompt no longer aborts non-interactive installs.
+
 ## [1.0.1] - 2026-09-25
 
 ### Changed
