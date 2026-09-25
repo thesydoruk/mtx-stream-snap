@@ -133,7 +133,7 @@ case "$PKG_MGR" in
     PKG_SPECS=(python curl ca-certificates tar gzip v4l-utils ffmpeg "?libjpeg-turbo")
     PY_AV_PKG=python-av ;;
   zypper)
-    PKG_SPECS=(python3 curl ca-certificates tar gzip v4l-utils "ffmpeg-7|ffmpeg-6|ffmpeg-5|ffmpeg-4|ffmpeg" "?libopenh264-7|libopenh264" "?libturbojpeg0")
+    PKG_SPECS=(python3 curl ca-certificates tar gzip v4l-utils "ffmpeg-7|ffmpeg-6|ffmpeg-5|ffmpeg-4|ffmpeg" "?libopenh264-8|libopenh264-7|libopenh264" "?libturbojpeg0")
     PY_AV_PKG=python3-av ;;
 esac
 
@@ -173,6 +173,7 @@ echo "🔄 Refreshing package metadata"
 pkg_refresh
 
 MISSING_PKGS=()
+OPTIONAL_PKGS=()
 for spec in "${PKG_SPECS[@]}"; do
   optional=0
   if [[ "$spec" == \?* ]]; then
@@ -197,7 +198,11 @@ for spec in "${PKG_SPECS[@]}"; do
     for pkg in "${alternatives[@]}"; do
       if pkg_available "$pkg"; then
         chosen="$pkg"
-        MISSING_PKGS+=("$pkg")
+        if [ "$optional" -eq 1 ]; then
+          OPTIONAL_PKGS+=("$pkg")
+        else
+          MISSING_PKGS+=("$pkg")
+        fi
         break
       fi
     done
@@ -218,6 +223,12 @@ if [ ${#MISSING_PKGS[@]} -ne 0 ]; then
   echo "🔧 Installing missing system packages: ${MISSING_PKGS[*]}"
   pkg_install "${MISSING_PKGS[@]}"
 fi
+
+# Optional packages one by one, so a broken optional one cannot block the rest
+for pkg in "${OPTIONAL_PKGS[@]}"; do
+  echo "🔧 Installing optional package: $pkg"
+  pkg_install "$pkg" || echo "⚠️  Could not install optional package $pkg (continuing without it)"
+done
 
 # ----------------------------------------------
 # Create Python virtual environment
