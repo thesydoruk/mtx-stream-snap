@@ -39,7 +39,7 @@ mtx-stream-snap/
   - Caps default FPS at `30` for the chosen resolution
 - Leverages hardware acceleration if available:
   - ✅ VAAPI (Intel/AMD GPU)
-  - ✅ RKMMP (Rockchip)
+  - ✅ RKMPP (Rockchip)
   - ✅ V4L2M2M (Raspberry Pi)
 - Configures `mediamtx.yml` with:
   - Enabled: `rtsp`, `webrtc`, `hls`
@@ -124,7 +124,7 @@ location /cam0/ {
 }
 
 # For HLS
-location /cam0/ {
+location /cam0_hls/ {
     proxy_pass http://127.0.0.1:8888/cam0/;
 }
 

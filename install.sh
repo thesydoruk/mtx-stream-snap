@@ -17,7 +17,7 @@
 set -e
 
 # Define directories
-BASE_DIR="$(dirname $(realpath $0))"
+BASE_DIR="$(dirname "$(realpath "$0")")"
 VENV_DIR="$BASE_DIR/venv"
 SERVICE_DIR="/etc/systemd/system"
 TEMPLATE_DIR="$BASE_DIR/templates"
@@ -105,7 +105,11 @@ pip install -r "$BASE_DIR/venv-requirements.txt"
 deactivate
 
 # Download latest MediaMTX binary
-VERSION=$(curl -s https://api.github.com/repos/bluenviron/mediamtx/releases/latest | grep tag_name | cut -d '"' -f 4)
+VERSION=$(curl -fsSL https://api.github.com/repos/bluenviron/mediamtx/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
+if [ -z "$VERSION" ]; then
+  echo "❌ Failed to determine the latest MediaMTX version (GitHub API unreachable or rate-limited)."
+  exit 1
+fi
 ARCH=$(uname -m)
 case "$ARCH" in
   armv6l)       PLATFORM="linux_armv6" ;;
@@ -116,9 +120,10 @@ case "$ARCH" in
 esac
 
 TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
 cd "$TMP_DIR"
 echo "⬇️  Downloading MediaMTX $VERSION for $PLATFORM..."
-curl -L -o mediamtx.tar.gz "https://github.com/bluenviron/mediamtx/releases/download/${VERSION}/mediamtx_${VERSION}_${PLATFORM}.tar.gz"
+curl -fL -o mediamtx.tar.gz "https://github.com/bluenviron/mediamtx/releases/download/${VERSION}/mediamtx_${VERSION}_${PLATFORM}.tar.gz"
 tar -xzf mediamtx.tar.gz
 
 mkdir -p "$MEDIAMTX_DIR"

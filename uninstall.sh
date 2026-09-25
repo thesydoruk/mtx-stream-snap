@@ -15,7 +15,7 @@ set -e
 echo "🧹 Starting uninstallation..."
 
 # Define directories
-BASE_DIR="$(dirname $(realpath $0))"
+BASE_DIR="$(dirname "$(realpath "$0")")"
 RENDERED_DIR="$BASE_DIR/services"
 SERVICE_DIR="/etc/systemd/system"
 VENV_DIR="$BASE_DIR/venv"
@@ -26,9 +26,9 @@ SERVICES=(snapfeeder.service mediamtx.service)
 
 # Stop and disable systemd services
 for svc in "${SERVICES[@]}"; do
-  if systemctl is-enabled "$svc" &>/dev/null; then
-    echo "⛔ Disabling $svc"
-    sudo systemctl disable --now "$svc"
+  if systemctl cat "$svc" &>/dev/null; then
+    echo "⛔ Stopping and disabling $svc"
+    sudo systemctl disable --now "$svc" || true
   fi
 
   TARGET="$SERVICE_DIR/$svc"

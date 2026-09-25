@@ -1,0 +1,2 @@
+# Target platform is Linux: keep LF line endings in the repo and working tree
+* text=auto eol=lf

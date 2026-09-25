@@ -5,7 +5,6 @@ Wants=systemd-udev-settle.service
 RequiresMountsFor=__BASE_DIR__
 ConditionPathIsDirectory=__BASE_DIR__/mediamtx
 ConditionPathExists=__BASE_DIR__/mediamtx/mediamtx
-ConditionPathExists=__VENV_DIR__/bin/python
 
 [Service]
 Type=simple

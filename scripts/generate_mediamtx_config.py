@@ -8,8 +8,8 @@ Regenerates the 'paths' section in ../mediamtx/mediamtx.yml based on connected
 MediaMTX protocols.
 
 Behavior:
-- Enables: rtsp, webrtc
-- Disables: rtmp, hls, metrics, etc.
+- Enables: rtsp, webrtc, hls
+- Disables: rtmp, api, metrics, pprof, playback, srt
 - Adds default STUN server
 - Chooses best available format (mjpeg preferred), resolution (1280x720 if possible), and max fps
 - Uses hardware encoder if test passes (vaapi, rkmpp, v4l2m2m)
@@ -27,13 +27,13 @@ from pathlib import Path
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "mediamtx" / "mediamtx.yml"
 PREFERRED_RES = "1280x720"
 MAX_DEFAULT_FPS = 30
-FORMAT_PRIORITY = ["mjpeg", "h264", "nv12", "yuv420", "yuyv422", "rawvideo"]
+FORMAT_PRIORITY = ["mjpeg", "h264", "nv12", "yuv420p", "yuyv422", "rgb24", "bgr24"]
 FORMAT_ALIASES = {
     "mjpg": "mjpeg",
     "yuyv": "yuyv422",
-    "yu12": "yuv420",
-    "rgb3": "rawvideo",
-    "bgr3": "rawvideo",
+    "yu12": "yuv420p",
+    "rgb3": "rgb24",
+    "bgr3": "bgr24",
 }
 
 FLAGS_ON = ["rtsp", "webrtc", "hls"]
@@ -200,13 +200,17 @@ def build_ffmpeg_cmd(device, fmt, res, fps, cam_id, use_vaapi, use_rkmpp, use_v4
         "-i", device
     ]
 
-    encoder_args = ["-vf", "hqdn3d"]
+    # ffmpeg honors only the last -vf, so the whole filter chain goes into one
+    video_filter = "hqdn3d"
+    encoder_args = []
     hwaccel_args = []
 
     if use_vaapi:
         if "vaapi" in AVAILABLE_HWACCELS:
-            hwaccel_args += ["-hwaccel", "vaapi", "-vaapi_device", "/dev/dri/renderD128"]
-        encoder_args += ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi"]
+            hwaccel_args += ["-hwaccel", "vaapi"]
+        hwaccel_args += ["-vaapi_device", "/dev/dri/renderD128"]
+        video_filter += ",format=nv12,hwupload"
+        encoder_args += ["-c:v", "h264_vaapi"]
 
     elif use_rkmpp:
         if ("rkmpp" in AVAILABLE_HWACCELS):
@@ -219,9 +223,9 @@ def build_ffmpeg_cmd(device, fmt, res, fps, cam_id, use_vaapi, use_rkmpp, use_v4
         encoder_args += ["-pix_fmt", "yuv420p", "-c:v", "h264_v4l2m2m"]
 
     else:
-        encoder_args += ["-c:v", "libx264", "-preset", "ultrafast"]
+        encoder_args += ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency"]
 
-    encoder_args += ["-b:v", "4M", "-tune", "zerolatency"]
+    encoder_args = ["-vf", video_filter] + encoder_args + ["-b:v", "4M"]
     output_args = ["-g", str(gop), "-bf", "0", "-f", "rtsp", rtsp_url]
 
     cmd = ["ffmpeg", "-y"] + hwaccel_args + input_args + encoder_args + output_args
@@ -254,7 +258,11 @@ use_rkmpp = has_rkmpp_encoder()
 use_v4l2m2m = has_v4l2m2m_encoder()
 
 # Clear camera-specific entries (preserving all_others)
-all_others = config["paths"].pop("all_others", {})
+if config.get("paths") is None:
+    config["paths"] = {}
+for key in [k for k in config["paths"] if re.fullmatch(r"cam\d+", str(k))]:
+    del config["paths"][key]
+all_others = config["paths"].pop("all_others", None)
 
 # Autodetect and configure each /dev/video* device
 for dev in list_video_devices():
@@ -285,4 +293,5 @@ config["paths"]["all_others"] = all_others
 with CONFIG_PATH.open("w") as f:
     yaml.dump(config, f)
 
-print(f"✅ mediamtx.yml updated (VAAPI: {'yes' if use_vaapi else 'no'})")
+encoder = "vaapi" if use_vaapi else "rkmpp" if use_rkmpp else "v4l2m2m" if use_v4l2m2m else "libx264 (software)"
+print(f"✅ mediamtx.yml updated (encoder: {encoder})")
