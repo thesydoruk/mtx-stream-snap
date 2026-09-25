@@ -12,7 +12,9 @@ Behavior:
 - Disables: rtmp, api, metrics, pprof, playback, srt
 - Adds default STUN server
 - Chooses best available format (mjpeg preferred), resolution (1280x720 if possible), and max fps
-- Uses hardware encoder if test passes (vaapi, rkmpp, v4l2m2m)
+- Picks the first H.264 encoder that passes a test encode:
+  vaapi, rkmpp, v4l2m2m, libx264, libopenh264 (ffmpeg builds differ between distros)
+- Adds the hqdn3d denoise filter only when this ffmpeg build has it
 """
 
 import os
@@ -20,7 +22,6 @@ import re
 import sys
 import subprocess
 from collections import defaultdict
-from ruamel.yaml import YAML
 from pathlib import Path
 
 # Config path relative to this script (scripts/) → ../mediamtx/mediamtx.yml
@@ -39,77 +40,106 @@ FORMAT_ALIASES = {
 FLAGS_ON = ["rtsp", "webrtc", "hls"]
 FLAGS_OFF = ["rtmp", "api", "metrics", "pprof", "playback", "srt"]
 
-def list_available_hwaccels():
+VAAPI_DEVICE = "/dev/dri/renderD128"
+TEST_SOURCE = ["-f", "lavfi", "-i", "testsrc2=size=128x128:rate=5", "-frames:v", "1"]
+
+# H.264 encoders in order of preference. "filters" are appended to the video
+# filter chain, "args" select the encoder. Browsers (WebRTC/HLS) need 4:2:0.
+ENCODERS = [
+    {
+        "name": "vaapi",
+        "hwaccel": "vaapi",
+        "global_args": ["-vaapi_device", VAAPI_DEVICE],
+        "filters": ["format=nv12", "hwupload"],
+        "args": ["-c:v", "h264_vaapi"],
+    },
+    {
+        "name": "rkmpp",
+        "hwaccel": "rkmpp",
+        "global_args": [],
+        "filters": [],
+        "args": ["-pix_fmt", "nv12", "-c:v", "h264_rkmpp"],
+    },
+    {
+        "name": "v4l2m2m",
+        "hwaccel": "v4l2m2m",
+        "global_args": [],
+        "filters": [],
+        "args": ["-pix_fmt", "yuv420p", "-c:v", "h264_v4l2m2m"],
+    },
+    {
+        "name": "libx264",
+        "hwaccel": None,
+        "global_args": [],
+        "filters": [],
+        "args": ["-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency"],
+    },
+    {
+        # Fedora/openSUSE ship ffmpeg without x264 but with OpenH264
+        "name": "libopenh264",
+        "hwaccel": None,
+        "global_args": [],
+        "filters": [],
+        "args": ["-pix_fmt", "yuv420p", "-c:v", "libopenh264"],
+    },
+]
+
+
+def run_ffmpeg(args, timeout=30):
+    """
+    Runs ffmpeg with the given arguments. Returns CompletedProcess, or None when
+    ffmpeg is missing or hangs.
+    """
     try:
-        result = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-hwaccels"],
-            capture_output=True, text=True
+        return subprocess.run(
+            ["ffmpeg", "-hide_banner"] + args,
+            capture_output=True, text=True, timeout=timeout
         )
-        lines = result.stdout.splitlines()
-        return [line.strip() for line in lines if line.strip() and not line.startswith("Hardware")]
-    except Exception:
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def list_available_hwaccels():
+    result = run_ffmpeg(["-hwaccels"])
+    if not result:
         return []
+    return [line.strip() for line in result.stdout.splitlines()
+            if line.strip() and not line.startswith("Hardware")]
 
-AVAILABLE_HWACCELS = list_available_hwaccels()
 
-
-def has_vaapi_encoder():
+def has_filter(name):
     """
-    Checks whether VAAPI hardware encoder (h264_vaapi) is available
-    by running a test FFmpeg command using synthetic input.
+    Checks whether this ffmpeg build provides the given video filter
+    (LGPL builds lack GPL filters such as hqdn3d).
     """
-    try:
-        test_cmd = [
-            "ffmpeg", "-hide_banner",
-            "-f", "lavfi", "-i", "testsrc2=size=128x128:rate=5",
-            "-frames:v", "1",
-            "-vaapi_device", "/dev/dri/renderD128",
-            "-vf", "format=nv12,hwupload",
-            "-c:v", "h264_vaapi",
-            "-f", "null", "-"
-        ]
-        result = subprocess.run(test_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return result.returncode == 0
-    except Exception:
+    result = run_ffmpeg(["-filters"])
+    if not result:
         return False
+    pattern = re.compile(rf"\s*\S+\s+{re.escape(name)}\s")
+    return any(pattern.match(line) for line in result.stdout.splitlines())
 
-def has_rkmpp_encoder():
-    """
-    Checks whether Rockchip MPP encoder (h264_rkmpp) is available
-    by running a test FFmpeg command with synthetic input and nv12 format.
-    """
-    try:
-        test_cmd = [
-            "ffmpeg", "-hide_banner",
-            "-f", "lavfi", "-i", "testsrc2=size=128x128:rate=5",
-            "-frames:v", "1",
-            "-pix_fmt", "nv12",
-            "-c:v", "h264_rkmpp",
-            "-f", "null", "-"
-        ]
-        result = subprocess.run(test_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return result.returncode == 0
-    except Exception:
-        return False
 
-def has_v4l2m2m_encoder():
+def encoder_works(encoder):
     """
-    Checks whether V4L2 M2M encoder (h264_v4l2m2m) is available
-    by running a test FFmpeg command with synthetic input and yuv420p format.
+    Runs a one-frame test encode with synthetic input to check that the encoder
+    is both compiled in and usable on this machine.
     """
-    try:
-        test_cmd = [
-            "ffmpeg", "-hide_banner",
-            "-f", "lavfi", "-i", "testsrc2=size=128x128:rate=5",
-            "-frames:v", "1",
-            "-c:v", "h264_v4l2m2m",
-            "-pix_fmt", "yuv420p",
-            "-f", "null", "-"
-        ]
-        result = subprocess.run(test_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return result.returncode == 0
-    except Exception:
-        return False
+    vf = ",".join(encoder["filters"])
+    args = (encoder["global_args"] + TEST_SOURCE + (["-vf", vf] if vf else [])
+            + encoder["args"] + ["-f", "null", "-"])
+    result = run_ffmpeg(["-loglevel", "error"] + args)
+    return result is not None and result.returncode == 0
+
+
+def detect_encoder():
+    """
+    Returns the first working encoder from ENCODERS, or None.
+    """
+    for encoder in ENCODERS:
+        if encoder_works(encoder):
+            return encoder
+    return None
+
 
 def list_video_devices():
     """
@@ -185,14 +215,8 @@ def select_best_format(formats_by_type):
 
     return None, None, None
 
-def build_ffmpeg_cmd(device, fmt, res, fps, cam_id, use_vaapi, use_rkmpp, use_v4l2m2m):
-    """
-    Builds a ffmpeg command using available hardware encoders and optional hwaccel support.
-    """
-    gop = max(1, fps // 2)
-    rtsp_url = f"rtsp://localhost:8554/{cam_id}"
-
-    input_args = [
+def build_input_args(device, fmt, res, fps):
+    return [
         "-f", "v4l2",
         "-input_format", fmt,
         "-video_size", res,
@@ -200,101 +224,111 @@ def build_ffmpeg_cmd(device, fmt, res, fps, cam_id, use_vaapi, use_rkmpp, use_v4
         "-i", device
     ]
 
-    # ffmpeg honors only the last -vf, so the whole filter chain goes into one
-    video_filter = "hqdn3d"
-    encoder_args = []
-    hwaccel_args = []
 
-    if use_vaapi:
-        if "vaapi" in AVAILABLE_HWACCELS:
-            hwaccel_args += ["-hwaccel", "vaapi"]
-        hwaccel_args += ["-vaapi_device", "/dev/dri/renderD128"]
-        video_filter += ",format=nv12,hwupload"
-        encoder_args += ["-c:v", "h264_vaapi"]
-
-    elif use_rkmpp:
-        if ("rkmpp" in AVAILABLE_HWACCELS):
-            hwaccel_args += ["-hwaccel", "rkmpp"]
-        encoder_args += ["-pix_fmt", "nv12", "-c:v", "h264_rkmpp"]
-
-    elif use_v4l2m2m:
-        if "v4l2m2m" in AVAILABLE_HWACCELS:
-            hwaccel_args += ["-hwaccel", "v4l2m2m"]
-        encoder_args += ["-pix_fmt", "yuv420p", "-c:v", "h264_v4l2m2m"]
-
-    else:
-        encoder_args += ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency"]
-
-    encoder_args = ["-vf", video_filter] + encoder_args + ["-b:v", "4M"]
-    output_args = ["-g", str(gop), "-bf", "0", "-f", "rtsp", rtsp_url]
+def build_ffmpeg_cmd(input_args, fps, cam_id, encoder, denoise=True, hwaccels=()):
+    """
+    Builds the ffmpeg command publishing input_args as H.264 to MediaMTX.
+    """
+    gop = max(1, fps // 2)
+    rtsp_url = f"rtsp://localhost:8554/{cam_id}"
 
     # Only warnings and errors: progress stats would flood the MediaMTX log / journal
     log_args = ["-hide_banner", "-nostats", "-loglevel", "warning"]
+
+    hwaccel_args = []
+    if encoder["hwaccel"] and encoder["hwaccel"] in hwaccels:
+        hwaccel_args += ["-hwaccel", encoder["hwaccel"]]
+    hwaccel_args += encoder["global_args"]
+
+    # ffmpeg honors only the last -vf, so the whole filter chain goes into one
+    filters = (["hqdn3d"] if denoise else []) + encoder["filters"]
+    filter_args = ["-vf", ",".join(filters)] if filters else []
+
+    encoder_args = filter_args + encoder["args"] + ["-b:v", "4M"]
+    output_args = ["-g", str(gop), "-bf", "0", "-f", "rtsp", rtsp_url]
 
     cmd = ["ffmpeg", "-y"] + log_args + hwaccel_args + input_args + encoder_args + output_args
     return " ".join(cmd)
 
 
-# Load, modify, and save mediamtx config
-yaml = YAML()
-yaml.preserve_quotes = True
+def main():
+    from ruamel.yaml import YAML
 
-if not CONFIG_PATH.exists():
-    print(f"❌ Config file not found: {CONFIG_PATH}", file=sys.stderr)
-    sys.exit(1)
+    # Load, modify, and save mediamtx config
+    yaml = YAML()
+    yaml.preserve_quotes = True
 
-with CONFIG_PATH.open("r") as f:
-    config = yaml.load(f)
+    if not CONFIG_PATH.exists():
+        print(f"❌ Config file not found: {CONFIG_PATH}", file=sys.stderr)
+        sys.exit(1)
 
-# Enable desired protocols and disable others
-for key in FLAGS_OFF:
-    config[key] = False
-for key in FLAGS_ON:
-    config[key] = True
+    encoder = detect_encoder()
+    if encoder is None:
+        tried = ", ".join(e["name"] for e in ENCODERS)
+        print(f"❌ No working H.264 encoder found in ffmpeg (tried: {tried}).\n"
+              "   Install an ffmpeg build with libx264 or OpenH264 support.", file=sys.stderr)
+        sys.exit(1)
+    denoise = has_filter("hqdn3d")
+    hwaccels = list_available_hwaccels()
 
-# Add WebRTC ICE STUN server
-config["webrtcICEServers2"] = [{"url": "stun:stun.l.google.com:19302"}]
+    with CONFIG_PATH.open("r") as f:
+        config = yaml.load(f)
 
-# Detect hardware encoder support
-use_vaapi = has_vaapi_encoder()
-use_rkmpp = has_rkmpp_encoder()
-use_v4l2m2m = has_v4l2m2m_encoder()
+    # Enable desired protocols and disable others
+    for key in FLAGS_OFF:
+        config[key] = False
+    for key in FLAGS_ON:
+        config[key] = True
 
-# Clear camera-specific entries (preserving all_others)
-if config.get("paths") is None:
-    config["paths"] = {}
-for key in [k for k in config["paths"] if re.fullmatch(r"cam\d+", str(k))]:
-    del config["paths"][key]
-all_others = config["paths"].pop("all_others", None)
+    # Add WebRTC ICE STUN server
+    config["webrtcICEServers2"] = [{"url": "stun:stun.l.google.com:19302"}]
 
-# Autodetect and configure each /dev/video* device
-for dev in list_video_devices():
-    match = re.search(r"video(\d+)", dev)
-    if not match:
-        continue
-    cam_id = f"cam{match.group(1)}"
+    # Clear camera-specific entries (preserving all_others)
+    if config.get("paths") is None:
+        config["paths"] = {}
+    for key in [k for k in config["paths"] if re.fullmatch(r"cam\d+", str(k))]:
+        del config["paths"][key]
+    all_others = config["paths"].pop("all_others", None)
 
-    raw = run_v4l2ctl(dev)
-    if not raw:
-        continue
+    # Autodetect and configure each /dev/video* device
+    cameras = []
+    for dev in list_video_devices():
+        match = re.search(r"video(\d+)", dev)
+        if not match:
+            continue
+        cam_id = f"cam{match.group(1)}"
 
-    formats = parse_formats(raw)
-    fmt, res, fps = select_best_format(formats)
-    if not all([fmt, res, fps]):
-        continue
+        raw = run_v4l2ctl(dev)
+        if not raw:
+            continue
 
-    config["paths"][cam_id] = {
-        "source": "publisher",
-        "runOnInit": build_ffmpeg_cmd(dev, fmt, res, fps, cam_id, use_vaapi, use_rkmpp, use_v4l2m2m),
-        "runOnInitRestart": True
-    }
+        formats = parse_formats(raw)
+        fmt, res, fps = select_best_format(formats)
+        if not all([fmt, res, fps]):
+            continue
 
-# Reattach all_others
-config["paths"]["all_others"] = all_others
+        input_args = build_input_args(dev, fmt, res, fps)
+        config["paths"][cam_id] = {
+            "source": "publisher",
+            "runOnInit": build_ffmpeg_cmd(input_args, fps, cam_id, encoder, denoise, hwaccels),
+            "runOnInitRestart": True
+        }
+        cameras.append(f"{cam_id} ({dev}, {fmt} {res}@{fps})")
 
-# Write updated config to disk
-with CONFIG_PATH.open("w") as f:
-    yaml.dump(config, f)
+    # Reattach all_others
+    config["paths"]["all_others"] = all_others
 
-encoder = "vaapi" if use_vaapi else "rkmpp" if use_rkmpp else "v4l2m2m" if use_v4l2m2m else "libx264 (software)"
-print(f"✅ mediamtx.yml updated (encoder: {encoder})")
+    # Write updated config to disk
+    with CONFIG_PATH.open("w") as f:
+        yaml.dump(config, f)
+
+    denoise_state = "yes" if denoise else "no"
+    print(f"✅ mediamtx.yml updated (encoder: {encoder['name']}, denoise: {denoise_state})")
+    for cam in cameras:
+        print(f"   🎥 {cam}")
+    if not cameras:
+        print("   ⚠️  No usable /dev/video* cameras found")
+
+
+if __name__ == "__main__":
+    main()

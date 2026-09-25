@@ -15,6 +15,8 @@ ExecStart=__VENV_DIR__/bin/python __BASE_DIR__/scripts/snapfeeder.py
 Restart=on-failure
 RestartSec=3
 User=__USERNAME__
+# Show Python output in the journal immediately
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target

@@ -1,8 +1,8 @@
 # Upper bounds keep installs on major versions tested with this release;
 # lower bounds allow older Python versions on SBC distros to resolve.
-Flask>=2.2,<4
+Flask>=2.0,<4
 numpy>=1.23,<3
-av>=12,<19
+av>=10,<19
 ruamel.yaml>=0.17.21,<0.20
 # PyTurboJPEG 2.x requires libjpeg-turbo 3.0, which Debian, Ubuntu and
 # Raspberry Pi OS do not ship yet (they have 2.1.x)

@@ -3,7 +3,7 @@
 # ==============================================================================
 # Full Installer for MediaMTX + SnapFeeder
 # ----------------------------------------
-# - Installs dependencies via APT and pip if needed
+# - Installs system dependencies (apt, dnf, pacman or zypper)
 # - Creates Python virtual environment in ./venv/
 # - Downloads MediaMTX (pinned version) and places it into ./mediamtx/
 # - Generates mediamtx.yml using scripts/generate_mediamtx_config.py
@@ -14,7 +14,9 @@
 #   - Installs rendered files into /etc/systemd/system/
 # - Starts and enables systemd services
 #
-# Usage: bash install.sh [--regenerate-config]
+# Usage: bash install.sh [--regenerate-config] [--deps-only]
+#   --regenerate-config  recreate mediamtx.yml (the old one is backed up)
+#   --deps-only          only install system packages and the Python venv
 #
 # Environment:
 #   MEDIAMTX_VERSION  MediaMTX release tag to install (default: tested version
@@ -27,10 +29,12 @@ set -e
 MEDIAMTX_VERSION="${MEDIAMTX_VERSION:-v1.21.1}"
 
 REGENERATE_CONFIG=0
+DEPS_ONLY=0
 for arg in "$@"; do
   case "$arg" in
     --regenerate-config) REGENERATE_CONFIG=1 ;;
-    -h|--help) sed -n '3,22p' "$0"; exit 0 ;;
+    --deps-only) DEPS_ONLY=1 ;;
+    -h|--help) sed -n '3,24p' "$0"; exit 0 ;;
     *) echo "❌ Unknown option: $arg"; exit 1 ;;
   esac
 done
@@ -51,6 +55,87 @@ PROJECT_VERSION=$(cat "$BASE_DIR/VERSION" 2>/dev/null || echo "unknown")
 
 echo "📦 mtx-stream-snap $PROJECT_VERSION (MediaMTX $MEDIAMTX_VERSION)"
 
+# Run privileged commands directly when already root (e.g. containers without sudo)
+if [ "$(id -u)" -eq 0 ]; then
+  SUDO=()
+elif command -v sudo >/dev/null 2>&1; then
+  SUDO=(sudo)
+else
+  echo "❌ This installer needs root privileges: run it as root or install sudo."
+  exit 1
+fi
+
+# ----------------------------------------------
+# Package manager abstraction
+# ----------------------------------------------
+if command -v apt-get >/dev/null 2>&1; then
+  PKG_MGR=apt
+elif command -v dnf >/dev/null 2>&1; then
+  PKG_MGR=dnf
+elif command -v pacman >/dev/null 2>&1; then
+  PKG_MGR=pacman
+elif command -v zypper >/dev/null 2>&1; then
+  PKG_MGR=zypper
+else
+  echo "❌ Unsupported distribution: none of apt-get, dnf, pacman or zypper found."
+  echo "   Install python3 (with venv), ffmpeg, v4l-utils, curl and tar manually, then rerun."
+  exit 1
+fi
+echo "🐧 Package manager: $PKG_MGR"
+
+pkg_refresh() {
+  case "$PKG_MGR" in
+    apt)    "${SUDO[@]}" apt-get update ;;
+    dnf)    "${SUDO[@]}" dnf -y makecache ;;
+    pacman) "${SUDO[@]}" pacman -Sy --noconfirm ;;
+    zypper) "${SUDO[@]}" zypper --non-interactive refresh ;;
+  esac
+}
+
+pkg_installed() {
+  case "$PKG_MGR" in
+    apt)        dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "install ok installed" ;;
+    dnf|zypper) rpm -q "$1" >/dev/null 2>&1 ;;
+    pacman)     pacman -Qi "$1" >/dev/null 2>&1 ;;
+  esac
+}
+
+pkg_available() {
+  case "$PKG_MGR" in
+    apt)    apt-cache show "$1" 2>/dev/null | grep -q '^Package:' ;;
+    dnf)    dnf -q info "$1" >/dev/null 2>&1 ;;
+    pacman) pacman -Si "$1" >/dev/null 2>&1 ;;
+    zypper) zypper --non-interactive -q search --match-exact "$1" >/dev/null 2>&1 ;;
+  esac
+}
+
+pkg_install() {
+  case "$PKG_MGR" in
+    apt)    "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" ;;
+    dnf)    "${SUDO[@]}" dnf install -y "$@" ;;
+    # -Su completes the -Sy from pkg_refresh: Arch does not support partial upgrades
+    pacman) "${SUDO[@]}" pacman -Su --needed --noconfirm "$@" ;;
+    zypper) "${SUDO[@]}" zypper --non-interactive install "$@" ;;
+  esac
+}
+
+# Package specs: "a|b" picks the first available alternative, a leading "?"
+# marks the package optional (skipped with a warning when unavailable).
+case "$PKG_MGR" in
+  apt)
+    PKG_SPECS=(python3 python3-venv curl ca-certificates tar gzip v4l-utils ffmpeg "?libturbojpeg0|libturbojpeg")
+    PY_AV_PKG=python3-av ;;
+  dnf)
+    PKG_SPECS=(python3 curl ca-certificates tar gzip v4l-utils "ffmpeg|ffmpeg-free" "?openh264" "?turbojpeg")
+    PY_AV_PKG=python3-av ;;
+  pacman)
+    PKG_SPECS=(python curl ca-certificates tar gzip v4l-utils ffmpeg "?libjpeg-turbo")
+    PY_AV_PKG=python-av ;;
+  zypper)
+    PKG_SPECS=(python3 curl ca-certificates tar gzip v4l-utils "ffmpeg-7|ffmpeg-6|ffmpeg-5|ffmpeg-4|ffmpeg" "?libopenh264-7|libopenh264" "?libturbojpeg0")
+    PY_AV_PKG=python3-av ;;
+esac
+
 # ----------------------------------------------
 # 🤖 Detect Rockchip platform (e.g., RK3588, RK3399)
 # If detected, offer to install custom FFmpeg build
@@ -63,12 +148,12 @@ if [ -f /proc/device-tree/compatible ]; then
     ROCKCHIP_CPU=$(tr -d '\0' < /proc/device-tree/compatible | grep -o 'rockchip,[^,]*' || true)
 fi
 
-if [[ -n "$ROCKCHIP_CPU" ]]; then
+if [[ -n "$ROCKCHIP_CPU" && "$DEPS_ONLY" -eq 0 && "$PKG_MGR" == "apt" && -t 0 ]]; then
     echo -e "🧠  \e[33mDetected Rockchip platform:\e[0m $ROCKCHIP_CPU"
-    
+
     # Prompt user to optionally install the custom FFmpeg
     echo -e "🚀  \e[36mWould you like to install a custom FFmpeg build with Rockchip hardware acceleration (MPP/RGA)?\e[0m"
-    read -p "✅  Type 'yes' to proceed or press Enter to skip: " user_input
+    read -r -p "✅  Type 'yes' to proceed or press Enter to skip: " user_input || true
 
     if [[ "$user_input" == "yes" ]]; then
       echo -e "🔧  \e[32mLaunching FFmpeg installer...\e[0m"
@@ -76,57 +161,108 @@ if [[ -n "$ROCKCHIP_CPU" ]]; then
     else
         echo -e "⏭️  \e[34mSkipping custom FFmpeg installation.\e[0m"
     fi
-else
-    echo -e "ℹ️  \e[34mNo Rockchip platform detected. Skipping hardware-accelerated FFmpeg prompt.\e[0m"
+elif [[ -n "$ROCKCHIP_CPU" ]]; then
+    echo -e "ℹ️  \e[34mRockchip platform detected ($ROCKCHIP_CPU); the custom FFmpeg installer is offered only on interactive apt-based installs.\e[0m"
 fi
 
+# ----------------------------------------------
 # Ensure required system packages are installed
-REQUIRED_PKGS=(python3 python3-pip python3-venv curl v4l-utils)
-MISSING_PKGS=()
+# ----------------------------------------------
+echo "🔄 Refreshing package metadata"
+pkg_refresh
 
-for pkg in "${REQUIRED_PKGS[@]}"; do
-  if ! dpkg -s "$pkg" >/dev/null 2>&1; then
-    MISSING_PKGS+=("$pkg")
+MISSING_PKGS=()
+for spec in "${PKG_SPECS[@]}"; do
+  optional=0
+  if [[ "$spec" == \?* ]]; then
+    optional=1
+    spec="${spec#\?}"
+  fi
+
+  # Keep an already installed ffmpeg (e.g. the custom Rockchip build)
+  if [[ "$spec" == *ffmpeg* ]] && command -v ffmpeg >/dev/null 2>&1; then
+    continue
+  fi
+
+  IFS='|' read -r -a alternatives <<< "$spec"
+  chosen=""
+  for pkg in "${alternatives[@]}"; do
+    if pkg_installed "$pkg"; then
+      chosen="installed"
+      break
+    fi
+  done
+  if [ -z "$chosen" ]; then
+    for pkg in "${alternatives[@]}"; do
+      if pkg_available "$pkg"; then
+        chosen="$pkg"
+        MISSING_PKGS+=("$pkg")
+        break
+      fi
+    done
+  fi
+
+  if [ -z "$chosen" ]; then
+    if [ "$optional" -eq 1 ]; then
+      echo "⚠️  Optional package not available: ${spec//|/ or } (continuing without it)"
+    else
+      echo "❌ Required package not available: ${spec//|/ or }"
+      echo "   Check your package sources (ffmpeg may need an extra repository, e.g. RPM Fusion or Packman)."
+      exit 1
+    fi
   fi
 done
 
-if ! command -v ffmpeg >/dev/null 2>&1; then
-  echo "ℹ️  ffmpeg not found, adding to install list"
-  MISSING_PKGS+=(ffmpeg)
+if [ ${#MISSING_PKGS[@]} -ne 0 ]; then
+  echo "🔧 Installing missing system packages: ${MISSING_PKGS[*]}"
+  pkg_install "${MISSING_PKGS[@]}"
 fi
 
-if apt-cache show libturbojpeg0 >/dev/null 2>&1; then
-  if ! dpkg -s libturbojpeg0 >/dev/null 2>&1; then
-    echo "ℹ️  libturbojpeg0 is available and not installed — adding to install list"
-    MISSING_PKGS+=(libturbojpeg0)
-  fi
-elif apt-cache show libturbojpeg >/dev/null 2>&1; then
-  if ! dpkg -s libturbojpeg >/dev/null 2>&1; then
-    echo "ℹ️  libturbojpeg is available and not installed — adding to install list"
-    MISSING_PKGS+=(libturbojpeg)
-  fi
-else
-  echo "❌ Neither 'libturbojpeg0' nor 'libturbojpeg' are available in APT repositories."
-  echo "   Please check your APT sources."
+# ----------------------------------------------
+# Create Python virtual environment
+# ----------------------------------------------
+pip_install_requirements() {
+  "$VENV_DIR/bin/python" -m pip install --upgrade pip wheel &&
+    # Prefer an older release with a prebuilt wheel over building from source
+    "$VENV_DIR/bin/python" -m pip install --prefer-binary -r "$BASE_DIR/venv-requirements.txt"
+}
+
+echo "🔧 Creating Python virtual environment"
+if ! python3 -m venv "$VENV_DIR"; then
+  echo "❌ python3 cannot create virtual environments (install the venv/ensurepip package for your Python)."
   exit 1
 fi
 
-if [ ${#MISSING_PKGS[@]} -ne 0 ]; then
-  echo "🔧 Installing missing system packages: ${MISSING_PKGS[*]}"
-  sudo apt update
-  sudo apt install -y "${MISSING_PKGS[@]}"
+if ! pip_install_requirements; then
+  # Typical on armv7 and other platforms without PyAV wheels: use the distro's
+  # prebuilt PyAV through a venv that can see system site-packages
+  echo "⚠️  pip could not install all dependencies; retrying with the distro package $PY_AV_PKG"
+  if pkg_available "$PY_AV_PKG" && pkg_install "$PY_AV_PKG"; then
+    rm -rf "$VENV_DIR"
+    python3 -m venv --system-site-packages "$VENV_DIR"
+    if ! pip_install_requirements; then
+      echo "❌ Failed to install Python dependencies, see pip output above."
+      exit 1
+    fi
+  else
+    echo "❌ Failed to install Python dependencies and $PY_AV_PKG is not available."
+    exit 1
+  fi
 fi
 
+if [ "$DEPS_ONLY" -eq 1 ]; then
+  echo "✅ Dependencies installed (--deps-only)"
+  exit 0
+fi
 
-# Create Python virtual environment
-echo "🔧 Creating Python virtual environment"
-python3 -m venv "$VENV_DIR"
-source "$VENV_DIR/bin/activate"
-pip install --upgrade pip wheel
-pip install -r "$BASE_DIR/venv-requirements.txt"
-deactivate
+if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+  echo "❌ systemd is not running on this system; the services cannot be installed."
+  exit 1
+fi
 
+# ----------------------------------------------
 # Download MediaMTX binary
+# ----------------------------------------------
 VERSION="$MEDIAMTX_VERSION"
 if [ "$VERSION" = "latest" ]; then
   VERSION=$(curl -fsSL https://api.github.com/repos/bluenviron/mediamtx/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
@@ -171,6 +307,15 @@ else
   "$VENV_DIR/bin/python" "$SCRIPTS_DIR/generate_mediamtx_config.py"
 fi
 
+# Device access for the camera/encoder processes: only groups that exist here
+# (a missing group in SupplementaryGroups= would stop the service from starting)
+SUPPLEMENTARY_GROUPS=""
+for group in video render; do
+  if getent group "$group" >/dev/null 2>&1; then
+    SUPPLEMENTARY_GROUPS="${SUPPLEMENTARY_GROUPS:+$SUPPLEMENTARY_GROUPS }$group"
+  fi
+done
+
 # Render systemd service templates
 mkdir -p "$RENDERED_DIR"
 
@@ -187,19 +332,19 @@ for template in "$TEMPLATE_DIR"/*.service.template; do
     -e "s|__BASE_DIR__|$BASE_DIR|g" \
     -e "s|__VENV_DIR__|$VENV_DIR|g" \
     -e "s|__USERNAME__|$USERNAME|g" \
+    -e "s|__SUPPLEMENTARY_GROUPS__|$SUPPLEMENTARY_GROUPS|g" \
     "$template" > "$output"
 
   # Install rendered service file into systemd directory
   echo "📦 Installing $base → $systemd_target"
-  sudo install -m 644 "$output" "$systemd_target"
+  "${SUDO[@]}" install -m 644 "$output" "$systemd_target"
 done
 
 # Reload systemd and enable/start services
 echo "🚀 Reloading and enabling services..."
-sudo systemctl daemon-reexec
-sudo systemctl daemon-reload
-sudo systemctl enable mediamtx.service snapfeeder.service
-sudo systemctl restart mediamtx.service snapfeeder.service
+"${SUDO[@]}" systemctl daemon-reload
+"${SUDO[@]}" systemctl enable mediamtx.service snapfeeder.service
+"${SUDO[@]}" systemctl restart mediamtx.service snapfeeder.service
 
 # Show configured camera URLs
 echo "✅ Installation complete!"

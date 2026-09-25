@@ -10,11 +10,12 @@ This server:
 - Detects all cameras with `source: publisher` and RTSP in `runOnInit`
 - Connects to each RTSP stream with PyAV in a background thread
 - Keeps the latest decoded frame in memory
-- Encodes to JPEG on-demand using TurboJPEG
+- Encodes to JPEG on-demand using TurboJPEG (falls back to PyAV's MJPEG
+  encoder when libturbojpeg is missing or incompatible)
 - One snapshot endpoint per camera: /cam0.jpg, /cam1.jpg, etc.
 
 Dependencies:
-- ruamel.yaml, flask, av, turbojpeg
+- ruamel.yaml, flask, av, numpy; optional: turbojpeg + libturbojpeg
 """
 
 import re
@@ -22,10 +23,10 @@ import sys
 import av
 import time
 import threading
+from fractions import Fraction
 from ruamel.yaml import YAML
 from flask import Flask, send_file
 from io import BytesIO
-from turbojpeg import TurboJPEG, TJPF_BGR
 from pathlib import Path
 
 # Configuration file path: ../mediamtx/mediamtx.yml
@@ -34,7 +35,43 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / "mediamtx" / "mediamtx.ym
 # Flask app and runtime data
 app = Flask(__name__)
 CAMERAS = {}  # cam name → stream info
-JPEG_ENCODER = TurboJPEG()
+
+
+def encode_jpeg_pyav(frame):
+    """
+    Encodes a frame to JPEG with FFmpeg's MJPEG encoder bundled in PyAV.
+    Slower than TurboJPEG but needs no system library.
+    """
+    ctx = av.CodecContext.create("mjpeg", "w")
+    ctx.width = frame.width
+    ctx.height = frame.height
+    ctx.pix_fmt = "yuvj420p"
+    ctx.time_base = Fraction(1, 1)
+    ctx.options = {"qmin": "2", "qmax": "2"}  # best practical MJPEG quality
+    packets = ctx.encode(frame.reformat(format="yuvj420p")) + ctx.encode(None)
+    return b"".join(bytes(p) for p in packets)
+
+
+def create_jpeg_encoder():
+    """
+    Returns (name, encode(frame) -> bytes). Prefers TurboJPEG; falls back to
+    PyAV when PyTurboJPEG or a compatible libturbojpeg is not available, which
+    differs between distributions.
+    """
+    try:
+        from turbojpeg import TurboJPEG, TJPF_BGR
+        turbo = TurboJPEG()
+    except Exception as e:
+        print(f"TurboJPEG unavailable ({e}), using PyAV MJPEG encoder")
+        return "pyav", encode_jpeg_pyav
+
+    def encode_turbo(frame):
+        return turbo.encode(frame.to_ndarray(format='bgr24'), quality=100, pixel_format=TJPF_BGR)
+
+    return "turbojpeg", encode_turbo
+
+
+JPEG_ENCODER_NAME, encode_jpeg = create_jpeg_encoder()
 
 # Parse MediaMTX config and extract camera definitions
 def parse_mediamtx_config():
@@ -86,10 +123,9 @@ def capture_loop(name):
                 cam['latest_frame'] = frame
 
             print(f"[{name}] Stream ended, reconnecting in {retry_delay}s...")
-        except av.FFmpegError as e:
-            print(f"[{name}] FFmpegError: {e}, retrying in {retry_delay}s...")
         except Exception as e:
-            print(f"[{name}] Unexpected error: {e}, retrying in {retry_delay}s...")
+            # PyAV exception class names differ between versions, so catch broadly
+            print(f"[{name}] Stream error: {e}, retrying in {retry_delay}s...")
         finally:
             # Do not serve stale frames while the stream is down
             cam['latest_frame'] = None
@@ -122,7 +158,7 @@ def serve_snapshot(name):
         return send_file(BytesIO(cached[1]), mimetype='image/jpeg')
 
     try:
-        jpeg_buf = JPEG_ENCODER.encode(frame.to_ndarray(format='bgr24'), quality=100, pixel_format=TJPF_BGR)
+        jpeg_buf = encode_jpeg(frame)
         cam['latest_jpeg'] = (frame, jpeg_buf)
         return send_file(BytesIO(jpeg_buf), mimetype='image/jpeg')
     except Exception as e:
@@ -143,6 +179,7 @@ if __name__ == '__main__':
         print("No RTSP publishers found in mediamtx.yml.")
         sys.exit(1)
 
+    print(f"JPEG encoder: {JPEG_ENCODER_NAME}")
     for name in CAMERAS:
         t = threading.Thread(target=capture_loop, args=(name,), daemon=True)
         t.start()
