@@ -18,6 +18,7 @@ Dependencies:
 - ruamel.yaml, flask, av, numpy; optional: turbojpeg + libturbojpeg
 """
 
+import os
 import re
 import sys
 import av
@@ -56,8 +57,11 @@ def create_jpeg_encoder():
     """
     Returns (name, encode(frame) -> bytes). Prefers TurboJPEG; falls back to
     PyAV when PyTurboJPEG or a compatible libturbojpeg is not available, which
-    differs between distributions.
+    differs between distributions. SNAPFEEDER_JPEG_ENCODER=pyav forces the fallback.
     """
+    if os.environ.get("SNAPFEEDER_JPEG_ENCODER", "auto").lower() == "pyav":
+        return "pyav", encode_jpeg_pyav
+
     try:
         from turbojpeg import TurboJPEG, TJPF_BGR
         turbo = TurboJPEG()

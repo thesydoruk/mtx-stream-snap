@@ -123,23 +123,41 @@ for _ in $(seq 1 30); do
 done
 (echo >/dev/tcp/127.0.0.1/8554) >/dev/null 2>&1 || fail "MediaMTX did not open RTSP port 8554"
 
-echo "🚀 Starting snapfeeder"
-PYTHONUNBUFFERED=1 "$PY" "$WORK_DIR/scripts/snapfeeder.py" >"$WORK_DIR/snapfeeder.log" 2>&1 &
-PIDS+=($!)
+# Starts snapfeeder with the given JPEG encoder ("auto" or "pyav") and checks
+# that it serves a real JPEG for cam0 and 404 for unknown cameras
+check_snapfeeder() {
+  local encoder="$1"
+  local log="$WORK_DIR/snapfeeder-$encoder.log"
+  local snapshot="$WORK_DIR/cam0-$encoder.jpg"
+  local code="" magic pid
 
-echo "🖼️  Waiting for snapshot"
-SNAPSHOT="$WORK_DIR/cam0.jpg"
-for _ in $(seq 1 60); do
-  code=$(curl -s -o "$SNAPSHOT" -w '%{http_code}' http://127.0.0.1:5050/cam0.jpg || true)
-  [ "$code" = "200" ] && break
-  sleep 1
-done
-[ "${code:-}" = "200" ] || fail "Snapshot endpoint did not return 200 (last status: ${code:-none})"
+  echo "🚀 Starting snapfeeder (JPEG encoder: $encoder)"
+  PYTHONUNBUFFERED=1 SNAPFEEDER_JPEG_ENCODER="$encoder"     "$PY" "$WORK_DIR/scripts/snapfeeder.py" >"$log" 2>&1 &
+  pid=$!
+  PIDS+=("$pid")
 
-magic=$(head -c 3 "$SNAPSHOT" | od -An -tx1 | tr -d ' \n')
-[ "$magic" = "ffd8ff" ] || fail "Snapshot is not a JPEG (magic: $magic)"
+  for _ in $(seq 1 60); do
+    code=$(curl -s -o "$snapshot" -w '%{http_code}' http://127.0.0.1:5050/cam0.jpg || true)
+    [ "$code" = "200" ] && break
+    sleep 1
+  done
+  [ "$code" = "200" ] || fail "[$encoder] Snapshot endpoint did not return 200 (last status: ${code:-none})"
 
-code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5050/nope.jpg || true)
-[ "$code" = "404" ] || fail "Unknown camera should return 404 (got $code)"
+  magic=$(head -c 3 "$snapshot" | od -An -tx1 | tr -d ' 
+')
+  [ "$magic" = "ffd8ff" ] || fail "[$encoder] Snapshot is not a JPEG (magic: $magic)"
 
-echo "✅ Smoke test passed ($(wc -c <"$SNAPSHOT") byte JPEG, $(grep -m1 'JPEG encoder' "$WORK_DIR/snapfeeder.log" || echo 'JPEG encoder: ?'))"
+  code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:5050/nope.jpg || true)
+  [ "$code" = "404" ] || fail "[$encoder] Unknown camera should return 404 (got $code)"
+
+  echo "✅ [$encoder] $(wc -c <"$snapshot") byte JPEG, $(grep -m1 'JPEG encoder' "$log" || echo 'JPEG encoder: ?')"
+
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
+
+check_snapfeeder auto
+# Fallback path used when libturbojpeg is missing or incompatible
+check_snapfeeder pyav
+
+echo "✅ Smoke test passed"
