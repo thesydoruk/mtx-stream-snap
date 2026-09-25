@@ -95,7 +95,8 @@ pkg_refresh() {
 pkg_installed() {
   case "$PKG_MGR" in
     apt)        dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "install ok installed" ;;
-    dnf|zypper) rpm -q "$1" >/dev/null 2>&1 ;;
+    # --whatprovides also matches capabilities such as openSUSE's "python3"
+    dnf|zypper) rpm -q --whatprovides "$1" >/dev/null 2>&1 ;;
     pacman)     pacman -Qi "$1" >/dev/null 2>&1 ;;
   esac
 }
@@ -105,7 +106,7 @@ pkg_available() {
     apt)    apt-cache show "$1" 2>/dev/null | grep -q '^Package:' ;;
     dnf)    dnf -q info "$1" >/dev/null 2>&1 ;;
     pacman) pacman -Si "$1" >/dev/null 2>&1 ;;
-    zypper) zypper --non-interactive -q search --match-exact "$1" >/dev/null 2>&1 ;;
+    zypper) zypper --non-interactive -q search --provides --match-exact "$1" >/dev/null 2>&1 ;;
   esac
 }
 
@@ -207,7 +208,7 @@ for spec in "${PKG_SPECS[@]}"; do
       echo "⚠️  Optional package not available: ${spec//|/ or } (continuing without it)"
     else
       echo "❌ Required package not available: ${spec//|/ or }"
-      echo "   Check your package sources (ffmpeg may need an extra repository, e.g. RPM Fusion or Packman)."
+      echo "   Check your package sources (some distros ship ffmpeg only in extra repositories)."
       exit 1
     fi
   fi
