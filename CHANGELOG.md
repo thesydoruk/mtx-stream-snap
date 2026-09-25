@@ -6,6 +6,18 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-25
+
+### Changed
+- Generated camera commands run ffmpeg with `-hide_banner -nostats -loglevel warning`,
+  so the MediaMTX log and the systemd journal no longer receive a progress line
+  per frame batch (less SD card wear on single-board computers).
+
+  `install.sh` keeps an existing `mediamtx.yml`, so to get this on an upgraded
+  install either add these flags after `ffmpeg -y` in each `runOnInit` line, or run
+  `bash install.sh --regenerate-config` (manual tuning in the old config is
+  kept only in the `.bak` copy).
+
 ## [1.0.0] - 2026-09-25
 
 First versioned release.
@@ -41,5 +53,6 @@ First versioned release.
 - `uninstall.sh` stops services even when they are not enabled.
 - `mediamtx.service` no longer depends on the Python venv.
 
-[Unreleased]: https://github.com/thesydoruk/mtx-stream-snap/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/thesydoruk/mtx-stream-snap/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/thesydoruk/mtx-stream-snap/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/thesydoruk/mtx-stream-snap/releases/tag/v1.0.0

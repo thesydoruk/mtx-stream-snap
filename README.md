@@ -198,7 +198,7 @@ Each camera (`cam0`, `cam1`, etc.) has a `runOnInit` FFmpeg command, for example
 paths:
   cam0:
     source: publisher
-    runOnInit: ffmpeg -y -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 30 -i /dev/video0 ...
+    runOnInit: ffmpeg -y -hide_banner -nostats -loglevel warning -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 30 -i /dev/video0 ...
     runOnInitRestart: true
 ```
 

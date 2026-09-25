@@ -228,7 +228,10 @@ def build_ffmpeg_cmd(device, fmt, res, fps, cam_id, use_vaapi, use_rkmpp, use_v4
     encoder_args = ["-vf", video_filter] + encoder_args + ["-b:v", "4M"]
     output_args = ["-g", str(gop), "-bf", "0", "-f", "rtsp", rtsp_url]
 
-    cmd = ["ffmpeg", "-y"] + hwaccel_args + input_args + encoder_args + output_args
+    # Only warnings and errors: progress stats would flood the MediaMTX log / journal
+    log_args = ["-hide_banner", "-nostats", "-loglevel", "warning"]
+
+    cmd = ["ffmpeg", "-y"] + log_args + hwaccel_args + input_args + encoder_args + output_args
     return " ".join(cmd)
 
 
